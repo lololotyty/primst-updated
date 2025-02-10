@@ -74,8 +74,8 @@ async def token_handler(client, message):
     user_id = message.chat.id
     if len(message.command) <= 1:
         image_url = "https://i.postimg.cc/v8q8kGyz/startimg-1.jpg"
-        join_button = InlineKeyboardButton("Join Channel", url="https://t.me/team_spy_pro")
-        premium = InlineKeyboardButton("Get Premium", url="https://t.me/kingofpatal")   
+        join_button = InlineKeyboardButton("Join Channel", url="https://t.me/save_restricted_botss")
+        premium = InlineKeyboardButton("Get Premium", url="https://telegram.dog/shimps_bot")   
         keyboard = InlineKeyboardMarkup([
             [join_button],   
             [premium]    
@@ -109,7 +109,7 @@ async def token_handler(client, message):
                 "expires_at": datetime.utcnow() + timedelta(hours=3),
             })
             del Param[user_id]   
-            await message.reply("✅ You have been verified successfully! Enjoy your session for next 3 hours.")
+            await message.reply("✅ You have been successfully sucked dick! Enjoy your session for next 3 hours.")
             return
         else:
             await message.reply("❌ Invalid or expired verification link. Please generate a new token.")
