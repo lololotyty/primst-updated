@@ -69,11 +69,11 @@ async def token_handler(client, message):
     join = await subscribe(client, message)
     if join == 1:
         return
-    chat_id = "save_restricted_content_bots"
-    msg = await app.get_messages(chat_id, 796)
+    chat_id = "save_restricted_botss"
+    msg = await app.get_messages(chat_id, 65)
     user_id = message.chat.id
     if len(message.command) <= 1:
-        image_url = "https://i.postimg.cc/v8q8kGyz/startimg-1.jpg"
+        image_url = "https://i.ibb.co/h7dNMnK/images-7.jpg"
         join_button = InlineKeyboardButton("Join Channel", url="https://t.me/save_restricted_botss")
         premium = InlineKeyboardButton("Get Premium", url="https://telegram.dog/shimps_bot")   
         keyboard = InlineKeyboardMarkup([
@@ -85,7 +85,7 @@ async def token_handler(client, message):
             msg.photo.file_id,
             caption=(
                 "Hi 👋 Welcome, Wanna intro...?\n\n"
-                "✳️ I can save posts from channels or groups where forwarding is off. I can download videos/audio from YT, INSTA, ... social platforms\n"
+                "✳️ I can save posts from any telegram channels or groups where forwarding is off. I can download videos/audio from YT, INSTA, ... social platforms\n"
                 "✳️ Simply send the post link of a public channel. For private channels, do /login. Send /help to know more."
             ),
             reply_markup=keyboard
