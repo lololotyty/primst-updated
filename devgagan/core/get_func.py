@@ -35,6 +35,7 @@ from config import MONGO_DB as MONGODB_CONNECTION_STRING, LOG_GROUP, OWNER_ID, S
 from devgagan.core.mongo import db as odb
 from telethon import TelegramClient, events, Button
 from devgagantools import fast_upload
+import shutil
 
 WATERMARK_SETTINGS = "watermark_settings"
 
@@ -112,233 +113,339 @@ async def save_watermark_settings(settings):
         print(f"Error saving watermark settings: {e}")
         return False
 
-async def apply_watermark(file_path):
-    try:
+async def apply_watermark(input_path, output_path, settings=None):
+    """Apply watermark to file based on type"""
+    if not settings:
         settings = await get_watermark_settings()
-        print(f"Watermark settings: {settings}")  # Debug log
-        
-        if not settings.get("enabled"):
-            print("Watermark is disabled")  # Debug log
-            return file_path
+    
+    if not settings.get("enabled", True) or not settings.get("text"):
+        # If watermark is disabled or text is empty, just copy the file
+        shutil.copy2(input_path, output_path)
+        return True
 
-        # Check if text is empty or not set
-        text = settings.get("text", "").strip()
-        if not text:
-            print("No watermark text set")  # Debug log
-            return file_path
+    file_ext = os.path.splitext(input_path)[1].lower()
+    
+    try:
+        if file_ext in ['.jpg', '.jpeg', '.png']:
+            return await apply_image_watermark(input_path, output_path, settings)
+        elif file_ext == '.pdf':
+            return await apply_pdf_watermark(input_path, output_path, settings)
+        elif file_ext in ['.mp4', '.avi', '.mov']:
+            return await apply_video_watermark(input_path, output_path, settings)
+        else:
+            # Unsupported file type, just copy
+            shutil.copy2(input_path, output_path)
+            return True
+    except Exception as e:
+        print(f"Error applying watermark: {e}")
+        # On error, copy original file
+        shutil.copy2(input_path, output_path)
+        return False
 
-        file_ext = file_path.split('.')[-1].lower()
-        print(f"Processing file with extension: {file_ext}")  # Debug log
-        
-        # Generate output path
-        output_path = f"{file_path[:-len(file_ext)-1]}_watermarked.{file_ext}"
-        print(f"Output path: {output_path}")  # Debug log
-        
-        if file_ext == 'pdf':
-            print("Processing PDF file")  # Debug log
+async def apply_image_watermark(input_path, output_path, settings):
+    """Apply watermark to image"""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        import math
+
+        # Open image
+        with Image.open(input_path) as img:
+            # Convert to RGBA
+            img = img.convert('RGBA')
+            
+            # Create text layer
+            txt = Image.new('RGBA', img.size, (255,255,255,0))
+            draw = ImageDraw.Draw(txt)
+
+            # Load font
+            font_size = settings.get('font_size', 36)
             try:
-                from PyPDF2 import PdfReader, PdfWriter
-                from reportlab.pdfgen import canvas
-                from reportlab.lib.pagesizes import letter
-                import io
-                
-                # Create watermark
-                packet = io.BytesIO()
-                c = canvas.Canvas(packet)  # Remove pagesize to match PDF size
-                text = settings.get("text").strip()  # Strip any extra whitespace
-                
-                # Get page size from first page
-                pdf = PdfReader(file_path)
-                if len(pdf.pages) > 0:
-                    page = pdf.pages[0]
-                    width = float(page.mediabox.width)
-                    height = float(page.mediabox.height)
-                    c.setPageSize((width, height))  # Set canvas size to match PDF
-                else:
-                    width, height = letter
-                    c.setPageSize(letter)
-                
-                # Calculate position
-                position = settings.get("position", "bottom-right")
-                font_size = settings.get("font_size", 36)
-                padding = 30
-                
-                if position == "top-left":
-                    x, y = padding, height - padding
-                elif position == "top-right":
-                    x, y = width - padding, height - padding
-                elif position == "bottom-left":
-                    x, y = padding, padding + font_size
-                elif position == "center":
-                    x, y = width/2, height/2
-                else:  # bottom-right
-                    x, y = width - padding, padding + font_size
-                
-                # Set transparency
-                opacity = settings.get("opacity", 0.7)
-                c.setFillAlpha(opacity)
-                
-                # Add text
-                c.setFont("Helvetica-Bold", font_size)  # Use bold font
-                c.setFillColorRGB(0, 0, 0)  # Black color for better visibility
-                c.drawString(x, y, text)
-                c.save()
-                
-                # Move to the beginning of the StringIO buffer
-                packet.seek(0)
-                watermark = PdfReader(packet)
-                
-                # Read the existing PDF
-                existing_pdf = PdfReader(file_path)
-                output = PdfWriter()
-                
-                # Add watermark to each page
-                for i in range(len(existing_pdf.pages)):
-                    page = existing_pdf.pages[i]
-                    page.merge_page(watermark.pages[0])
-                    output.add_page(page)
-                
-                # Write the watermarked file
-                with open(output_path, 'wb') as outputStream:
-                    output.write(outputStream)
-                
-                print(f"PDF saved with watermark: {output_path}")  # Debug log
-                return output_path
-                
-            except Exception as e:
-                print(f"Error processing PDF: {e}")  # Debug log
-                import traceback
-                print(traceback.format_exc())  # Print full error traceback
-                return file_path
-                
-        elif file_ext in ['jpg', 'jpeg', 'png']:
-            print("Processing image file")  # Debug log
-            # Image watermarking
-            from PIL import Image, ImageDraw, ImageFont
-            import os
-            
-            # Open image
-            img = Image.open(file_path)
-            
-            # Create drawing context
-            draw = ImageDraw.Draw(img)
-            
-            # Load font (use default system font if custom font not available)
-            try:
-                font = ImageFont.truetype("arial.ttf", settings.get("font_size", 36))
-                print("Using arial.ttf font")  # Debug log
+                font = ImageFont.truetype("arial.ttf", font_size)
             except:
                 font = ImageFont.load_default()
-                print("Using default font")  # Debug log
-            
+
+            text = settings.get('text', '')
+            position = settings.get('position', 'bottom-right')
+            opacity = int(255 * settings.get('opacity', 0.7))
+
             # Get text size
-            text = settings.get("text").strip()  # Strip any extra whitespace
-            text_width, text_height = draw.textsize(text, font=font)
-            print(f"Text dimensions: {text_width}x{text_height}")  # Debug log
-            
+            text_bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = text_bbox[2] - text_bbox[0]
+            text_height = text_bbox[3] - text_bbox[1]
+
             # Calculate position
-            position = settings.get("position", "bottom-right")
             padding = 10
-            if position == "top-left":
+            if position == 'top-left':
                 pos = (padding, padding)
-            elif position == "top-right":
+            elif position == 'top-right':
                 pos = (img.width - text_width - padding, padding)
-            elif position == "bottom-left":
+            elif position == 'bottom-left':
                 pos = (padding, img.height - text_height - padding)
-            elif position == "center":
+            elif position == 'center':
                 pos = ((img.width - text_width) // 2, (img.height - text_height) // 2)
             else:  # bottom-right
                 pos = (img.width - text_width - padding, img.height - text_height - padding)
-            print(f"Watermark position: {position} at {pos}")  # Debug log
-            
-            # Add watermark
-            opacity = int(255 * settings.get("opacity", 0.7))
-            draw.text(pos, text, font=font, fill=(255, 255, 255, opacity))
+
+            # Draw text
+            draw.text(pos, text, fill=(255,255,255,opacity), font=font)
+
+            # Combine layers
+            watermarked = Image.alpha_composite(img, txt)
+            watermarked = watermarked.convert('RGB')
             
             # Save
-            img.save(output_path)
-            print(f"Image saved with watermark: {output_path}")  # Debug log
-            return output_path
-            
-        elif file_ext in ['mp4', 'mkv', 'avi']:
-            print("Processing video file")  # Debug log
-            # Video watermarking
-            import cv2
-            import numpy as np
-            
-            # Open video
-            video = cv2.VideoCapture(file_path)
-            if not video.isOpened():
-                print("Failed to open video file")  # Debug log
-                return file_path
-            
-            # Get video properties
-            width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            fps = video.get(cv2.CAP_PROP_FPS)
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            print(f"Video properties: {width}x{height} @ {fps}fps")  # Debug log
-            
-            # Create output video
-            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-            if not out.isOpened():
-                print("Failed to create output video")  # Debug log
-                return file_path
-            
-            # Load font
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            text = settings.get("text").strip()  # Strip any extra whitespace
-            font_scale = settings.get("font_size", 36) / 36  # Convert font size to scale
-            thickness = 2
-            
-            # Get text size
-            (text_width, text_height), _ = cv2.getTextSize(text, font, font_scale, thickness)
-            print(f"Video text dimensions: {text_width}x{text_height}")  # Debug log
-            
-            # Calculate position
-            position = settings.get("position", "bottom-right")
-            padding = 10
-            if position == "top-left":
-                pos = (padding, text_height + padding)
-            elif position == "top-right":
-                pos = (width - text_width - padding, text_height + padding)
-            elif position == "bottom-left":
-                pos = (padding, height - padding)
-            elif position == "center":
-                pos = ((width - text_width) // 2, height // 2)
-            else:  # bottom-right
-                pos = (width - text_width - padding, height - padding)
-            print(f"Video watermark position: {position} at {pos}")  # Debug log
-            
-            # Process each frame
-            frame_count = 0
-            while True:
-                ret, frame = video.read()
-                if not ret:
-                    break
-                    
-                # Add watermark
-                opacity = settings.get("opacity", 0.7)
-                overlay = frame.copy()
-                cv2.putText(overlay, text, pos, font, font_scale, (255, 255, 255), thickness)
-                cv2.addWeighted(overlay, opacity, frame, 1 - opacity, 0, frame)
-                
-                out.write(frame)
-                frame_count += 1
-                if frame_count % 100 == 0:
-                    print(f"Processed {frame_count} frames")  # Debug log
-            
-            # Release resources
-            video.release()
-            out.release()
-            print(f"Video saved with watermark: {output_path}")  # Debug log
-            return output_path
-            
-        print(f"Unsupported file type: {file_ext}")  # Debug log
-        return file_path
+            watermarked.save(output_path, quality=95)
+            return True
     except Exception as e:
-        print(f"Error applying watermark: {e}")  # Debug log
-        return file_path
+        print(f"Error applying image watermark: {e}")
+        return False
+
+async def apply_pdf_watermark(input_path, output_path, settings):
+    """Apply watermark to PDF"""
+    try:
+        from PyPDF2 import PdfReader, PdfWriter
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import letter
+        import io
+
+        # Create watermark
+        packet = io.BytesIO()
+        c = canvas.Canvas(packet, pagesize=letter)
+        
+        text = settings.get('text', '')
+        position = settings.get('position', 'bottom-right')
+        font_size = settings.get('font_size', 36)
+        opacity = settings.get('opacity', 0.7)
+
+        # Position mapping
+        positions = {
+            'top-left': (50, letter[1] - 50),
+            'top-right': (letter[0] - 50, letter[1] - 50),
+            'bottom-left': (50, 50),
+            'bottom-right': (letter[0] - 50, 50),
+            'center': (letter[0]/2, letter[1]/2)
+        }
+        
+        x, y = positions.get(position, positions['bottom-right'])
+        
+        c.setFont("Helvetica", font_size)
+        c.setFillAlpha(opacity)
+        c.drawString(x, y, text)
+        c.save()
+
+        # Move to beginning of StringIO buffer
+        packet.seek(0)
+        watermark = PdfReader(packet)
+        
+        # Read original PDF
+        original = PdfReader(input_path)
+        output = PdfWriter()
+
+        # Add watermark to each page
+        for page in original.pages:
+            page.merge_page(watermark.pages[0])
+            output.add_page(page)
+
+        # Write output
+        with open(output_path, 'wb') as out_file:
+            output.write(out_file)
+            
+        return True
+    except Exception as e:
+        print(f"Error applying PDF watermark: {e}")
+        return False
+
+async def apply_video_watermark(input_path, output_path, settings):
+    """Apply watermark to video"""
+    try:
+        import cv2
+        import numpy as np
+        
+        # Open video
+        cap = cv2.VideoCapture(input_path)
+        if not cap.isOpened():
+            raise Exception("Could not open video file")
+
+        # Get video properties
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        # Create video writer
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+        # Prepare text properties
+        text = settings.get('text', '')
+        position = settings.get('position', 'bottom-right')
+        font_size = settings.get('font_size', 36) / 36  # Scale down for CV2
+        opacity = settings.get('opacity', 0.7)
+        
+        # Get text size
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        text_size = cv2.getTextSize(text, font, font_size, 2)[0]
+        
+        # Calculate position
+        padding = 10
+        if position == 'top-left':
+            pos = (padding, text_size[1] + padding)
+        elif position == 'top-right':
+            pos = (width - text_size[0] - padding, text_size[1] + padding)
+        elif position == 'bottom-left':
+            pos = (padding, height - padding)
+        elif position == 'center':
+            pos = ((width - text_size[0]) // 2, (height + text_size[1]) // 2)
+        else:  # bottom-right
+            pos = (width - text_size[0] - padding, height - padding)
+
+        # Process frames
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+                
+            # Add watermark
+            overlay = frame.copy()
+            cv2.putText(overlay, text, pos, font, font_size, (255,255,255), 2)
+            
+            # Apply opacity
+            cv2.addWeighted(overlay, opacity, frame, 1 - opacity, 0, frame)
+            
+            # Write frame
+            out.write(frame)
+
+        # Release everything
+        cap.release()
+        out.release()
+        
+        return True
+    except Exception as e:
+        print(f"Error applying video watermark: {e}")
+        return False
+
+@Client.on_message(filters.command("watermark"))
+async def watermark_command(client, message):
+    """Handle watermark command"""
+    user_id = message.from_user.id
+    
+    # Check if user is authorized
+    if not await is_user_authorized(user_id):
+        await message.reply("❌ You are not authorized to use watermark settings.")
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        settings = await get_watermark_settings()
+        status = "✅ Enabled" if settings.get("enabled") else "❌ Disabled"
+        position = settings.get("position", "bottom-right")
+        font_size = settings.get("font_size", 36)
+        opacity = settings.get("opacity", 0.7)
+        text = settings.get("text", "").strip()
+        
+        current_settings = (
+            f"📝 **Current Watermark Settings**\n\n"
+            f"• Status: {status}\n"
+            f"• Text: `{text}`\n"
+            f"• Position: `{position}`\n"
+            f"• Font Size: `{font_size}`\n"
+            f"• Opacity: `{opacity}`\n\n"
+            f"**Available Commands:**\n"
+            f"• `/watermark enable` - Enable watermark\n"
+            f"• `/watermark disable` - Disable watermark\n"
+            f"• `/watermark text <text>` - Set watermark text\n"
+            f"• `/watermark position <top-left/top-right/bottom-left/bottom-right/center>`\n"
+            f"• `/watermark size <12-72>` - Set font size\n"
+            f"• `/watermark opacity <0.1-1.0>` - Set opacity\n"
+        )
+        
+        if user_id in OWNER_ID:
+            current_settings += (
+                f"\n**Owner Commands:**\n"
+                f"• `/watermark adduser <user_id>` - Add authorized user\n"
+                f"• `/watermark removeuser <user_id>` - Remove authorized user\n"
+                f"• `/watermark listusers` - List authorized users"
+            )
+        
+        await message.reply(current_settings)
+        return
+
+    command = args[0].split("@")[0].lower()  # Remove bot username if present
+    settings = await get_watermark_settings()
+
+    if command == "enable":
+        settings["enabled"] = True
+        await save_watermark_settings(settings)
+        await message.reply("✅ Watermark enabled")
+    elif command == "disable":
+        settings["enabled"] = False
+        await save_watermark_settings(settings)
+        await message.reply("❌ Watermark disabled")
+    elif command == "text" and len(args) > 1:
+        text = " ".join(args[1:]).strip()
+        if text:  # Only update if text is not empty
+            settings["text"] = text
+            await save_watermark_settings(settings)
+            await message.reply(f"✅ Watermark text updated to: `{text}`")
+        else:
+            await message.reply("❌ Please provide some text for the watermark")
+    elif command == "position" and len(args) > 1:
+        pos = args[1].lower()
+        if pos in ["top-left", "top-right", "bottom-left", "bottom-right", "center"]:
+            settings["position"] = pos
+            await save_watermark_settings(settings)
+            await message.reply(f"✅ Watermark position set to: `{pos}`")
+        else:
+            await message.reply("❌ Invalid position. Use: top-left, top-right, bottom-left, bottom-right, or center")
+    elif command == "size" and len(args) > 1:
+        try:
+            size = int(args[1])
+            if 12 <= size <= 72:
+                settings["font_size"] = size
+                await save_watermark_settings(settings)
+                await message.reply(f"✅ Font size set to: `{size}`")
+            else:
+                await message.reply("❌ Font size must be between 12 and 72")
+        except ValueError:
+            await message.reply("❌ Invalid font size")
+    elif command == "opacity" and len(args) > 1:
+        try:
+            opacity = float(args[1])
+            if 0.1 <= opacity <= 1.0:
+                settings["opacity"] = opacity
+                await save_watermark_settings(settings)
+                await message.reply(f"✅ Opacity set to: `{opacity}`")
+            else:
+                await message.reply("❌ Opacity must be between 0.1 and 1.0")
+        except ValueError:
+            await message.reply("❌ Invalid opacity value")
+    elif command == "adduser" and len(args) > 1 and user_id in OWNER_ID:
+        try:
+            target_user_id = int(args[1])
+            if await add_watermark_user(target_user_id):
+                await message.reply(f"✅ User `{target_user_id}` authorized to use watermark feature")
+            else:
+                await message.reply("❌ Failed to authorize user")
+        except ValueError:
+            await message.reply("❌ Invalid user ID format")
+    elif command == "removeuser" and len(args) > 1 and user_id in OWNER_ID:
+        try:
+            target_user_id = int(args[1])
+            if await remove_watermark_user(target_user_id):
+                await message.reply(f"✅ User `{target_user_id}` removed from authorized users")
+            else:
+                await message.reply("❌ Failed to remove user")
+        except ValueError:
+            await message.reply("❌ Invalid user ID format")
+    elif command == "listusers" and user_id in OWNER_ID:
+        users = await get_watermark_users()
+        if users:
+            user_list = "\n".join([f"• `{uid}`" for uid in users])
+            await message.reply(f"**Authorized Watermark Users:**\n{user_list}")
+        else:
+            await message.reply("No users are authorized to use watermark")
+    else:
+        await message.reply("❌ Invalid command. Use /watermark to see available options")
 
 def thumbnail(sender):
     """Get thumbnail path for a sender"""
@@ -402,7 +509,9 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
 
         # Apply watermark if enabled
         original_file = file
-        file = await apply_watermark(file)
+        output_path = f"{file}_watermarked"
+        await apply_watermark(file, output_path)
+        file = output_path
         
         video_formats = {'mp4', 'mkv', 'avi', 'mov'}
         document_formats = {'pdf', 'docx', 'txt', 'epub'}
@@ -1444,188 +1553,3 @@ async def split_and_upload_file(app, sender, target_chat_id, file_path, caption,
 
     await start.delete()
     os.remove(file_path)
-
-# Initialize watermark command only if app client is available
-if app:
-    @app.on_message(filters.command("watermark") & filters.private)
-    async def watermark_command(client, message):
-        """Handle watermark command"""
-        user_id = message.from_user.id
-        args = message.text.split()
-        if len(args) < 2:
-            await message.reply(
-                f"\nUse /watermark with these options:\n"
-                f"enable/disable - Toggle watermark\n"
-                f"text <text> - Set watermark text\n"
-                f"position <top-left/top-right/bottom-left/bottom-right/center>\n"
-                f"size <font_size> - Set font size\n"
-                f"opacity <0.1-1.0> - Set opacity\n"
-                f"\nOwner commands:\n"
-                f"adduser <user_id> - Add authorized user\n"
-                f"removeuser <user_id> - Remove authorized user\n"
-                f"listusers - List authorized users"
-            )
-            return
-
-        settings = await get_watermark_settings()
-        command = args[0].split("@")[0].lower()  # Remove bot username if present
-
-        if command == "enable":
-            settings["enabled"] = True
-        elif command == "disable":
-            settings["enabled"] = False
-        elif command == "text" and len(args) > 1:
-            text = " ".join(args[1:]).strip()
-            if text:  # Only update if text is not empty
-                settings["text"] = text
-                await save_watermark_settings(settings)
-                await message.reply(f"✅ Watermark text updated to: `{text}`")
-            else:
-                await message.reply("❌ Please provide some text for the watermark")
-            return
-        elif command == "position" and len(args) > 1:
-            pos = args[1].lower()
-            if pos in ["top-left", "top-right", "bottom-left", "bottom-right", "center"]:
-                settings["position"] = pos
-        elif command == "size" and len(args) > 1:
-            try:
-                size = int(args[1])
-                if 12 <= size <= 72:
-                    settings["font_size"] = size
-            except ValueError:
-                pass
-        elif command == "opacity" and len(args) > 1:
-            try:
-                opacity = float(args[1])
-                if 0.1 <= opacity <= 1.0:
-                    settings["opacity"] = opacity
-            except ValueError:
-                pass
-
-        if await save_watermark_settings(settings):
-            await message.reply(" Watermark settings updated successfully!")
-        else:
-            await message.reply(" Failed to update watermark settings.")
-
-async def handle_watermark(client, message):
-    # Check if user is authorized
-    user_id = message.from_user.id
-    if not await is_user_authorized(user_id):
-        await message.reply("You are not authorized to use watermark settings.")
-        return
-
-    args = message.text.split()
-    if len(args) < 2:
-        settings = await get_watermark_settings()
-        status = "✅ Enabled" if settings.get("enabled") else "❌ Disabled"
-        position = settings.get("position", "bottom-right")
-        font_size = settings.get("font_size", 36)
-        opacity = settings.get("opacity", 0.7)
-        text = settings.get("text", "").strip()
-        
-        current_settings = (
-            f"📝 **Current Watermark Settings**\n\n"
-            f"• Status: {status}\n"
-            f"• Text: `{text}`\n"
-            f"• Position: `{position}`\n"
-            f"• Font Size: `{font_size}`\n"
-            f"• Opacity: `{opacity}`\n\n"
-            f"**Available Commands:**\n"
-            f"• `/watermark enable` - Enable watermark\n"
-            f"• `/watermark disable` - Disable watermark\n"
-            f"• `/watermark text <text>` - Set watermark text\n"
-            f"• `/watermark position <top-left/top-right/bottom-left/bottom-right/center>`\n"
-            f"• `/watermark size <12-72>` - Set font size\n"
-            f"• `/watermark opacity <0.1-1.0>` - Set opacity\n"
-        )
-        
-        if user_id in OWNER_ID:
-            current_settings += (
-                f"\n**Owner Commands:**\n"
-                f"• `/watermark adduser <user_id>` - Add authorized user\n"
-                f"• `/watermark removeuser <user_id>` - Remove authorized user\n"
-                f"• `/watermark listusers` - List authorized users"
-            )
-        
-        await message.reply(current_settings)
-        return
-
-    command = args[0].split("@")[0].lower()  # Remove bot username if present
-    settings = await get_watermark_settings()
-
-    if command == "enable":
-        settings["enabled"] = True
-    elif command == "disable":
-        settings["enabled"] = False
-    elif command == "text" and len(args) > 1:
-        text = " ".join(args[1:]).strip()
-        if text:  # Only update if text is not empty
-            settings["text"] = text
-            await save_watermark_settings(settings)
-            await message.reply(f"✅ Watermark text updated to: `{text}`")
-        else:
-            await message.reply("❌ Please provide some text for the watermark")
-        return
-    elif command == "position" and len(args) > 1:
-        pos = args[1].lower()
-        if pos in ["top-left", "top-right", "bottom-left", "bottom-right", "center"]:
-            settings["position"] = pos
-    elif command == "size" and len(args) > 1:
-        try:
-            size = int(args[1])
-            if 12 <= size <= 72:
-                settings["font_size"] = size
-            else:
-                await message.reply("Font size must be between 12 and 72")
-                return
-        except ValueError:
-            await message.reply("Invalid font size")
-            return
-    elif command == "opacity" and len(args) > 1:
-        try:
-            opacity = float(args[1])
-            if 0.1 <= opacity <= 1.0:
-                settings["opacity"] = opacity
-            else:
-                await message.reply("Opacity must be between 0.1 and 1.0")
-                return
-        except ValueError:
-            await message.reply("Invalid opacity value")
-            return
-    elif command == "adduser" and len(args) > 1 and user_id in OWNER_ID:
-        try:
-            target_user_id = int(args[1])
-            if await add_watermark_user(target_user_id):
-                await message.reply(f"User {target_user_id} has been authorized to use watermark feature.")
-            else:
-                await message.reply("Failed to authorize user.")
-            return
-        except ValueError:
-            await message.reply("Invalid user ID format.")
-            return
-    elif command == "removeuser" and len(args) > 1 and user_id in OWNER_ID:
-        try:
-            target_user_id = int(args[1])
-            if await remove_watermark_user(target_user_id):
-                await message.reply(f"User {target_user_id} has been removed from watermark authorized users.")
-            else:
-                await message.reply("Failed to remove user.")
-            return
-        except ValueError:
-            await message.reply("Invalid user ID format.")
-            return
-    elif command == "listusers" and user_id in OWNER_ID:
-        users = await get_watermark_users()
-        if users:
-            user_list = "\n".join([f"• `{uid}`" for uid in users])
-            await message.reply(f"**Authorized Watermark Users:**\n{user_list}")
-        else:
-            await message.reply("No users are authorized to use watermark.")
-        return
-    else:
-        await message.reply("Invalid command. Use /watermark to see available options.")
-        return
-
-    # Save settings
-    await save_watermark_settings(settings)
-    await message.reply("✅ Watermark settings updated successfully!")
