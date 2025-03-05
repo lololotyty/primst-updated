@@ -37,7 +37,19 @@ from telethon import TelegramClient, events, Button
 from devgagantools import fast_upload
 
 def thumbnail(sender):
-    return f'{sender}.jpg' if os.path.exists(f'{sender}.jpg') else None
+    thumb_path = f'{sender}.jpg'
+    try:
+        if os.path.exists(thumb_path):
+            return thumb_path
+        # Try to get from MongoDB if file doesn't exist
+        thumb_data = collection.find_one({"user_id": sender})
+        if thumb_data and thumb_data.get("thumb_path"):
+            # If found in DB but file doesn't exist, try to recreate it
+            if os.path.exists(thumb_data["thumb_path"]):
+                return thumb_data["thumb_path"]
+    except Exception as e:
+        print(f"Error getting thumbnail: {e}")
+    return None
 
 # MongoDB database name and collection name
 DB_NAME = "smart_users"
@@ -82,7 +94,13 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
         upload_method = await fetch_upload_method(sender)  # Fetch the upload method (Pyrogram or Telethon)
         metadata = video_metadata(file)
         width, height, duration = metadata['width'], metadata['height'], metadata['duration']
-        thumb_path = await screenshot(file, duration, sender)
+        
+        # Get thumbnail path and ensure it exists
+        thumb_path = thumbnail(sender)
+        if not thumb_path:
+            # If no custom thumbnail, try to generate one for videos
+            if file.split('.')[-1].lower() in VIDEO_EXTENSIONS:
+                thumb_path = await screenshot(file, duration, sender)
 
         video_formats = {'mp4', 'mkv', 'avi', 'mov'}
         document_formats = {'pdf', 'docx', 'txt', 'epub'}
@@ -153,29 +171,28 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
                 )
             ] if file.split('.')[-1].lower() in video_formats else []
 
-            await gf.send_file(
-                target_chat_id,
-                uploaded,
-                caption=caption,
-                attributes=attributes,
-                reply_to=topic_id,
-                thumb=thumb_path
-            )
-            await gf.send_file(
-                LOG_GROUP,
-                uploaded,
-                caption=caption,
-                attributes=attributes,
-                thumb=thumb_path
-            )
+            # Send to target chat and log group
+            for chat_id in [target_chat_id, LOG_GROUP]:
+                await gf.send_file(
+                    chat_id,
+                    uploaded,
+                    caption=caption,
+                    attributes=attributes,
+                    reply_to=topic_id,
+                    thumb=thumb_path
+                )
 
     except Exception as e:
         await app.send_message(LOG_GROUP, f"**Upload Failed:** {str(e)}")
         print(f"Error during media upload: {e}")
 
     finally:
-        if thumb_path and os.path.exists(thumb_path):
-            os.remove(thumb_path)
+        # Only remove screenshot thumbnails, not user-set thumbnails
+        if thumb_path and thumb_path.startswith('temp_'):
+            try:
+                os.remove(thumb_path)
+            except:
+                pass
         gc.collect()
 
 
@@ -298,7 +315,7 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         if file_size > size_limit and (free_check == 1 or pro is None):
             await edit.delete()
             await split_and_upload_file(app, sender, target_chat_id, file, caption, topic_id)
-            return
+            return       
         elif file_size > size_limit:
             await handle_large_file(file, sender, edit, caption)
         else:
@@ -602,6 +619,37 @@ async def send_settings_message(chat_id, user_id):
 
 pending_photos = {}
 
+@gf.on(events.NewMessage(func=lambda e: e.sender_id in pending_photos))
+async def save_thumbnail(event):
+    user_id = event.sender_id
+    try:
+        if event.photo:
+            temp_path = await event.download_media()
+            thumb_path = f'./{user_id}.jpg'
+            
+            # Remove old thumbnail if exists
+            if os.path.exists(thumb_path):
+                os.remove(thumb_path)
+                
+            # Save new thumbnail
+            os.rename(temp_path, thumb_path)
+            
+            # Save thumbnail path in MongoDB
+            collection.update_one(
+                {"user_id": user_id},
+                {"$set": {"thumb_path": thumb_path}},
+                upsert=True
+            )
+            
+            await event.respond('Thumbnail saved successfully! This will be used for all your uploads.')
+        else:
+            await event.respond('Please send a photo... Retry')
+    except Exception as e:
+        await event.respond(f'Error saving thumbnail: {str(e)}')
+    finally:
+        # Remove user from pending photos dictionary
+        pending_photos.pop(user_id, None)
+
 @gf.on(events.CallbackQuery)
 async def callback_query_handler(event):
     user_id = event.sender_id
@@ -708,31 +756,6 @@ async def callback_query_handler(event):
         except FileNotFoundError:
             await event.respond("No thumbnail found to remove.")
     
-
-@gf.on(events.NewMessage(func=lambda e: e.sender_id in pending_photos))
-async def save_thumbnail(event):
-    user_id = event.sender_id  # Use event.sender_id as user_id
-
-    if event.photo:
-        temp_path = await event.download_media()
-        if os.path.exists(f'{user_id}.jpg'):
-            os.remove(f'{user_id}.jpg')
-        os.rename(temp_path, f'./{user_id}.jpg')
-        await event.respond('Thumbnail saved successfully!')
-
-    else:
-        await event.respond('Please send a photo... Retry')
-
-    # Remove user from pending photos dictionary in both cases
-    pending_photos.pop(user_id, None)
-
-def save_user_upload_method(user_id, method):
-    # Save or update the user's preferred upload method
-    collection.update_one(
-        {'user_id': user_id},  # Query
-        {'$set': {'upload_method': method}},  # Update
-        upsert=True  # Create a new document if one doesn't exist
-    )
 
 @gf.on(events.NewMessage)
 async def handle_user_input(event):
