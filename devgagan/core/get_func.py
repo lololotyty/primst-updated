@@ -27,7 +27,7 @@ from telethon.sessions import StringSession
 import pymongo
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from pyrogram.enums import ParseMode
+from pyrogram.enums import ParseMode, MessageMediaType
 from pyrogram.errors import ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid
 from pyrogram.errors import RPCError
 from devgagan.core.func import *
