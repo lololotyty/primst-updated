@@ -116,15 +116,21 @@ async def apply_watermark(file_path):
     """Apply watermark to image or video"""
     try:
         settings = await get_watermark_settings()
+        print(f"Watermark settings: {settings}")  # Debug log
+        
         if not settings.get("enabled"):
+            print("Watermark is disabled")  # Debug log
             return file_path
 
         file_ext = file_path.split('.')[-1].lower()
+        print(f"Processing file with extension: {file_ext}")  # Debug log
         
         # Generate output path
         output_path = f"{file_path[:-len(file_ext)-1]}_watermarked.{file_ext}"
+        print(f"Output path: {output_path}")  # Debug log
         
         if file_ext in ['jpg', 'jpeg', 'png']:
+            print("Processing image file")  # Debug log
             # Image watermarking
             from PIL import Image, ImageDraw, ImageFont
             import os
@@ -138,12 +144,15 @@ async def apply_watermark(file_path):
             # Load font (use default system font if custom font not available)
             try:
                 font = ImageFont.truetype("arial.ttf", settings.get("font_size", 36))
+                print("Using arial.ttf font")  # Debug log
             except:
                 font = ImageFont.load_default()
+                print("Using default font")  # Debug log
             
             # Get text size
             text = settings.get("text", " Your Watermark")
             text_width, text_height = draw.textsize(text, font=font)
+            print(f"Text dimensions: {text_width}x{text_height}")  # Debug log
             
             # Calculate position
             position = settings.get("position", "bottom-right")
@@ -156,6 +165,7 @@ async def apply_watermark(file_path):
                 pos = (padding, img.height - text_height - padding)
             else:  # bottom-right
                 pos = (img.width - text_width - padding, img.height - text_height - padding)
+            print(f"Watermark position: {position} at {pos}")  # Debug log
             
             # Add watermark
             opacity = int(255 * settings.get("opacity", 0.7))
@@ -163,24 +173,33 @@ async def apply_watermark(file_path):
             
             # Save
             img.save(output_path)
+            print(f"Image saved with watermark: {output_path}")  # Debug log
             return output_path
             
         elif file_ext in ['mp4', 'mkv', 'avi']:
+            print("Processing video file")  # Debug log
             # Video watermarking
             import cv2
             import numpy as np
             
             # Open video
             video = cv2.VideoCapture(file_path)
+            if not video.isOpened():
+                print("Failed to open video file")  # Debug log
+                return file_path
             
             # Get video properties
             width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
             fps = video.get(cv2.CAP_PROP_FPS)
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            print(f"Video properties: {width}x{height} @ {fps}fps")  # Debug log
             
             # Create output video
             out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+            if not out.isOpened():
+                print("Failed to create output video")  # Debug log
+                return file_path
             
             # Load font
             font = cv2.FONT_HERSHEY_SIMPLEX
@@ -190,6 +209,7 @@ async def apply_watermark(file_path):
             
             # Get text size
             (text_width, text_height), _ = cv2.getTextSize(text, font, font_scale, thickness)
+            print(f"Video text dimensions: {text_width}x{text_height}")  # Debug log
             
             # Calculate position
             position = settings.get("position", "bottom-right")
@@ -202,8 +222,10 @@ async def apply_watermark(file_path):
                 pos = (padding, height - padding)
             else:  # bottom-right
                 pos = (width - text_width - padding, height - padding)
+            print(f"Video watermark position: {position} at {pos}")  # Debug log
             
             # Process each frame
+            frame_count = 0
             while True:
                 ret, frame = video.read()
                 if not ret:
@@ -216,18 +238,23 @@ async def apply_watermark(file_path):
                 cv2.addWeighted(overlay, opacity, frame, 1 - opacity, 0, frame)
                 
                 out.write(frame)
+                frame_count += 1
+                if frame_count % 100 == 0:
+                    print(f"Processed {frame_count} frames")  # Debug log
             
             # Release resources
             video.release()
             out.release()
+            print(f"Video saved with watermark: {output_path}")  # Debug log
             return output_path
             
+        print(f"Unsupported file type: {file_ext}")  # Debug log
         return file_path
     except Exception as e:
-        print(f"Error applying watermark: {e}")
+        print(f"Error applying watermark: {e}")  # Debug log
         return file_path
 
-def thumbnail(sender):
+thumbnail(sender):
     thumb_path = f'{sender}.jpg'
     try:
         if os.path.exists(thumb_path):
@@ -293,12 +320,9 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
                 thumb_path = await screenshot(file, duration, sender)
 
         # Apply watermark if enabled
-        watermark_settings = await get_watermark_settings()
-        if watermark_settings and watermark_settings.get("enabled"):
-            watermarked_file = await apply_watermark(file)
-            if watermarked_file != file:
-                file = watermarked_file
-
+        original_file = file
+        file = await apply_watermark(file)
+        
         video_formats = {'mp4', 'mkv', 'avi', 'mov'}
         document_formats = {'pdf', 'docx', 'txt', 'epub'}
         image_formats = {'jpg', 'png', 'jpeg'}
@@ -391,9 +415,8 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
                 os.remove(thumb_path)
             
             # Remove watermarked file if it was created
-            if watermark_settings and watermark_settings.get("enabled"):
-                if file != watermarked_file and os.path.exists(watermarked_file):
-                    os.remove(watermarked_file)
+            if file != original_file and os.path.exists(file):
+                os.remove(file)
         except:
             pass
         gc.collect()
@@ -691,8 +714,9 @@ async def copy_message_with_chat_id(app, userbot, sender, chat_id, message_id, e
     finally:
         if file and os.path.exists(file):
             os.remove(file)
-
-
+        if edit:
+            await edit.delete(2)
+        
 async def send_media_message(app, target_chat_id, msg, caption, topic_id):
     try:
         if msg.video:
