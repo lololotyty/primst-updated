@@ -79,6 +79,154 @@ async def is_authorized_for_watermark(user_id):
     authorized_users = await get_authorized_watermark_users()
     return user_id in authorized_users
 
+async def get_watermark_settings():
+    """Get current watermark settings"""
+    try:
+        settings = db[WATERMARK_SETTINGS].find_one({"_id": "settings"})
+        if not settings:
+            # Default settings
+            settings = {
+                "_id": "settings",
+                "enabled": False,
+                "text": " Your Watermark",
+                "position": "bottom-right",
+                "font_size": 36,
+                "opacity": 0.7
+            }
+            db[WATERMARK_SETTINGS].insert_one(settings)
+        return settings
+    except Exception as e:
+        print(f"Error getting watermark settings: {e}")
+        return {}
+
+async def save_watermark_settings(settings):
+    """Save watermark settings"""
+    try:
+        db[WATERMARK_SETTINGS].update_one(
+            {"_id": "settings"},
+            {"$set": settings},
+            upsert=True
+        )
+        return True
+    except Exception as e:
+        print(f"Error saving watermark settings: {e}")
+        return False
+
+async def apply_watermark(file_path):
+    """Apply watermark to image or video"""
+    try:
+        settings = await get_watermark_settings()
+        if not settings.get("enabled"):
+            return file_path
+
+        file_ext = file_path.split('.')[-1].lower()
+        
+        # Generate output path
+        output_path = f"{file_path[:-len(file_ext)-1]}_watermarked.{file_ext}"
+        
+        if file_ext in ['jpg', 'jpeg', 'png']:
+            # Image watermarking
+            from PIL import Image, ImageDraw, ImageFont
+            import os
+            
+            # Open image
+            img = Image.open(file_path)
+            
+            # Create drawing context
+            draw = ImageDraw.Draw(img)
+            
+            # Load font (use default system font if custom font not available)
+            try:
+                font = ImageFont.truetype("arial.ttf", settings.get("font_size", 36))
+            except:
+                font = ImageFont.load_default()
+            
+            # Get text size
+            text = settings.get("text", " Your Watermark")
+            text_width, text_height = draw.textsize(text, font=font)
+            
+            # Calculate position
+            position = settings.get("position", "bottom-right")
+            padding = 10
+            if position == "top-left":
+                pos = (padding, padding)
+            elif position == "top-right":
+                pos = (img.width - text_width - padding, padding)
+            elif position == "bottom-left":
+                pos = (padding, img.height - text_height - padding)
+            else:  # bottom-right
+                pos = (img.width - text_width - padding, img.height - text_height - padding)
+            
+            # Add watermark
+            opacity = int(255 * settings.get("opacity", 0.7))
+            draw.text(pos, text, font=font, fill=(255, 255, 255, opacity))
+            
+            # Save
+            img.save(output_path)
+            return output_path
+            
+        elif file_ext in ['mp4', 'mkv', 'avi']:
+            # Video watermarking
+            import cv2
+            import numpy as np
+            
+            # Open video
+            video = cv2.VideoCapture(file_path)
+            
+            # Get video properties
+            width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = video.get(cv2.CAP_PROP_FPS)
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            
+            # Create output video
+            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+            
+            # Load font
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            text = settings.get("text", " Your Watermark")
+            font_scale = settings.get("font_size", 36) / 36  # Convert font size to scale
+            thickness = 2
+            
+            # Get text size
+            (text_width, text_height), _ = cv2.getTextSize(text, font, font_scale, thickness)
+            
+            # Calculate position
+            position = settings.get("position", "bottom-right")
+            padding = 10
+            if position == "top-left":
+                pos = (padding, text_height + padding)
+            elif position == "top-right":
+                pos = (width - text_width - padding, text_height + padding)
+            elif position == "bottom-left":
+                pos = (padding, height - padding)
+            else:  # bottom-right
+                pos = (width - text_width - padding, height - padding)
+            
+            # Process each frame
+            while True:
+                ret, frame = video.read()
+                if not ret:
+                    break
+                    
+                # Add watermark
+                opacity = settings.get("opacity", 0.7)
+                overlay = frame.copy()
+                cv2.putText(overlay, text, pos, font, font_scale, (255, 255, 255), thickness)
+                cv2.addWeighted(overlay, opacity, frame, 1 - opacity, 0, frame)
+                
+                out.write(frame)
+            
+            # Release resources
+            video.release()
+            out.release()
+            return output_path
+            
+        return file_path
+    except Exception as e:
+        print(f"Error applying watermark: {e}")
+        return file_path
+
 def thumbnail(sender):
     thumb_path = f'{sender}.jpg'
     try:
@@ -753,23 +901,24 @@ async def callback_query_handler(event):
         # Retrieve the user's current upload method (default to Pyrogram)
         user_data = collection.find_one({'user_id': user_id})
         current_method = user_data.get('upload_method', 'Pyrogram') if user_data else 'Pyrogram'
-        pyrogram_check = " ✅" if current_method == "Pyrogram" else ""
-        telethon_check = " ✅" if current_method == "Telethon" else ""
+        pyrogram_check = " " if current_method == "Pyrogram" else ""
+        telethon_check = " " if current_method == "Telethon" else ""
 
         # Display the buttons for selecting the upload method
         buttons = [
             [Button.inline(f"Pyrogram v2{pyrogram_check}", b'pyrogram')],
-            [Button.inline(f"SpyLib v1 ⚡{telethon_check}", b'telethon')]
+            [Button.inline(f"SpyLib v1 {telethon_check}", b'telethon')]
         ]
-        await event.edit("Choose your preferred upload method:\n\n__**Note:** **shimp Lib ⚡**, built on Telethon(base), by shimperd still in beta.__", buttons=buttons)
+        await event.edit("Choose your preferred upload method:\n\n__**Note:** **shimp Lib**, built on Telethon(base), by shimperd still in beta.__", buttons=buttons)
 
     elif event.data == b'pyrogram':
         save_user_upload_method(user_id, "Pyrogram")
-        await event.edit("Upload method set to **Pyrogram** ✅")
+        await event.edit("Upload method set to **Pyrogram** ")
 
     elif event.data == b'telethon':
         save_user_upload_method(user_id, "Telethon")
-        await event.edit("Upload method set to **Shimp Lib ⚡\n\nThanks for choosing this library as it will help me to analyze the error raise issues on github.** ✅")        
+        await event.edit("Upload method set to **Shimp Lib \n\nThanks for choosing this library as it will help me to analyze the error raise issues on github.** ")
+
         
     elif event.data == b'reset':
         try:
@@ -800,7 +949,7 @@ async def callback_query_handler(event):
             thumbnail_path = f"{user_id}.jpg"
             if os.path.exists(thumbnail_path):
                 os.remove(thumbnail_path)
-            await event.respond("✅ Reset successfully, to logout click /logout")
+            await event.respond(" Reset successfully, to logout click /logout")
         except Exception as e:
             await event.respond(f"Error clearing delete list: {e}")
     
@@ -854,7 +1003,7 @@ async def handle_user_input(event):
         elif session_type == 'addsession':
             session_string = event.text
             await odb.set_session(user_id, session_string)
-            await event.respond("✅ Session string added successfully!")
+            await event.respond(" Session string added successfully!")
                 
         elif session_type == 'deleteword':
             words_to_delete = event.message.text.split()
@@ -889,7 +1038,7 @@ async def lock_command_handler(event):
 
 async def handle_large_file(file, sender, edit, caption):
     if pro is None:
-        await edit.edit('**__ ❌ 4GB trigger not found__**')
+        await edit.edit('**__ 4GB trigger not found**')
         os.remove(file)
         gc.collect()
         return
@@ -897,7 +1046,7 @@ async def handle_large_file(file, sender, edit, caption):
     dm = None
     
     print("4GB connector found.")
-    await edit.edit('**__ ✅ 4GB trigger connected...__**\n\n')
+    await edit.edit('**__ 4GB trigger connected...__**\n\n')
     
     target_chat_id = user_chat_ids.get(sender, sender)
     file_extension = str(file).split('.')[-1].lower()
@@ -945,7 +1094,7 @@ async def handle_large_file(file, sender, edit, caption):
         if freecheck == 1:
             reply_markup = InlineKeyboardMarkup(
                 [
-                    [InlineKeyboardButton("💎 Get Premium to Forward", url="https://telegram.dog/shimps_bot")]
+                    [InlineKeyboardButton(" Get Premium to Forward", url="https://telegram.dog/shimps_bot")]
                 ]
             )
             await app.copy_message(
@@ -1070,7 +1219,7 @@ def progress_callback(done, total, user_id):
     # Format the final output as needed
     final = (
         f"╭──────────────────╮\n"
-        f"│     **__Shimp Lib ⚡ Uploader__**       \n"
+        f"│     **__Shimp Lib Uploader__**       \n"
         f"├──────────\n"
         f"│ {progress_bar}\n\n"
         f"│ **__Progress:__** {percent:.2f}%\n"
@@ -1133,7 +1282,7 @@ def dl_progress_callback(done, total, user_id):
     # Format the final output as needed
     final = (
         f"╭──────────────────╮\n"
-        f"│     **__Shimp Lib ⚡ Downloader__**       \n"
+        f"│     **__Shimp Lib Downloader__**       \n"
         f"├──────────\n"
         f"│ {progress_bar}\n\n"
         f"│ **__Progress:__** {percent:.2f}%\n"
@@ -1154,11 +1303,11 @@ def dl_progress_callback(done, total, user_id):
 
 async def split_and_upload_file(app, sender, target_chat_id, file_path, caption, topic_id):
     if not os.path.exists(file_path):
-        await app.send_message(sender, "❌ File not found!")
+        await app.send_message(sender, " File not found!")
         return
 
     file_size = os.path.getsize(file_path)
-    start = await app.send_message(sender, f"ℹ️ File size: {file_size / (1024 * 1024):.2f} MB")
+    start = await app.send_message(sender, f" File size: {file_size / (1024 * 1024):.2f} MB")
     PART_SIZE =  1.9 * 1024 * 1024 * 1024
 
     part_number = 0
@@ -1177,7 +1326,7 @@ async def split_and_upload_file(app, sender, target_chat_id, file_path, caption,
                 await part_f.write(chunk)
 
             # Uploading part
-            edit = await app.send_message(target_chat_id, f"⬆️ Uploading part {part_number + 1}...")
+            edit = await app.send_message(target_chat_id, f" Uploading part {part_number + 1}...")
             part_caption = f"{caption} \n\n**Part : {part_number + 1}**"
             await app.send_document(target_chat_id, document=part_file, caption=part_caption, reply_to_message_id=topic_id,
                 progress=progress_bar,
@@ -1205,22 +1354,22 @@ if app:
                 target_user_id = int(args[1])
                 if args[0].lower() == 'add':
                     if await add_watermark_user(target_user_id):
-                        await message.reply(f"✅ User {target_user_id} has been authorized to use watermark feature.")
+                        await message.reply(f" User {target_user_id} has been authorized to use watermark feature.")
                     else:
-                        await message.reply("❌ Failed to authorize user.")
+                        await message.reply(" Failed to authorize user.")
                 else:  # remove
                     if await remove_watermark_user(target_user_id):
-                        await message.reply(f"✅ User {target_user_id} has been removed from watermark authorized users.")
+                        await message.reply(f" User {target_user_id} has been removed from watermark authorized users.")
                     else:
-                        await message.reply("❌ Failed to remove user.")
+                        await message.reply(" Failed to remove user.")
                 return
             except ValueError:
-                await message.reply("❌ Invalid user ID format.")
+                await message.reply(" Invalid user ID format.")
                 return
 
         # Check authorization for other watermark commands
         if not await is_authorized_for_watermark(user_id):
-            await message.reply("⚠️ You are not authorized to use watermark settings.")
+            await message.reply(" You are not authorized to use watermark settings.")
             return
 
         # List authorized users (only for owner)
@@ -1286,6 +1435,6 @@ if app:
                 pass
 
         if await save_watermark_settings(settings):
-            await message.reply("✅ Watermark settings updated successfully!")
+            await message.reply(" Watermark settings updated successfully!")
         else:
-            await message.reply("❌ Failed to update watermark settings.")
+            await message.reply(" Failed to update watermark settings.")
