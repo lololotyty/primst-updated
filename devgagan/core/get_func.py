@@ -36,6 +36,7 @@ from devgagan.core.mongo import db as odb
 from telethon import TelegramClient, events, Button
 from devgagantools import fast_upload
 import shutil
+import cv2
 
 # MongoDB database name and collection name
 DB_NAME = "smart_users"
@@ -334,6 +335,7 @@ async def apply_video_watermark(input_path, output_path, settings):
             pos = (width - text_size[0] - padding, height - padding)
 
         # Process frames
+        frame_count = 0
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
@@ -344,16 +346,27 @@ async def apply_video_watermark(input_path, output_path, settings):
             cv2.putText(overlay, text, pos, font, font_size, (255,255,255), 2)
             
             # Apply opacity
-            cv2.addWeighted(overlay, opacity, frame, 1 - opacity, 0, frame)
+            frame = cv2.addWeighted(overlay, opacity, frame, 1 - opacity, 0)
             
             # Write frame
             out.write(frame)
+            
+            frame_count += 1
+            if frame_count % 100 == 0:
+                print(f"Processed {frame_count}/{total_frames} frames")
 
         # Release everything
         cap.release()
         out.release()
+        cv2.destroyAllWindows()
         
+        # Verify the output file exists and has size
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            print("Error: Output video file is empty or does not exist")
+            return False
+            
         return True
+        
     except Exception as e:
         print(f"Error applying video watermark: {e}")
         return False
@@ -497,9 +510,13 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
         # Apply watermark if enabled
         original_file = file
         output_path = f"{file}_watermarked"
-        await apply_watermark(file, output_path)
-        file = output_path
-        
+        settings = await get_watermark_settings()
+        if settings.get("enabled", True) and settings.get("text"):
+            await apply_watermark(file, output_path, settings)
+            file = output_path
+        else:
+            output_path = file  # Keep original file if watermark not enabled
+
         video_formats = {'mp4', 'mkv', 'avi', 'mov'}
         document_formats = {'pdf', 'docx', 'txt', 'epub'}
         image_formats = {'jpg', 'png', 'jpeg'}
