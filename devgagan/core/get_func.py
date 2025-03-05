@@ -139,7 +139,7 @@ async def apply_watermark(file_path):
                 
                 # Create watermark
                 packet = io.BytesIO()
-                c = canvas.Canvas(packet, pagesize=letter)
+                c = canvas.Canvas(packet)  # Remove pagesize to match PDF size
                 text = settings.get("text").strip()  # Strip any extra whitespace
                 
                 # Get page size from first page
@@ -148,8 +148,10 @@ async def apply_watermark(file_path):
                     page = pdf.pages[0]
                     width = float(page.mediabox.width)
                     height = float(page.mediabox.height)
+                    c.setPageSize((width, height))  # Set canvas size to match PDF
                 else:
                     width, height = letter
+                    c.setPageSize(letter)
                 
                 # Calculate position
                 position = settings.get("position", "bottom-right")
@@ -172,8 +174,8 @@ async def apply_watermark(file_path):
                 c.setFillAlpha(opacity)
                 
                 # Add text
-                c.setFont("Helvetica", font_size)
-                c.setFillColorRGB(0.5, 0.5, 0.5)  # Gray color
+                c.setFont("Helvetica-Bold", font_size)  # Use bold font
+                c.setFillColorRGB(0, 0, 0)  # Black color for better visibility
                 c.drawString(x, y, text)
                 c.save()
                 
@@ -200,6 +202,8 @@ async def apply_watermark(file_path):
                 
             except Exception as e:
                 print(f"Error processing PDF: {e}")  # Debug log
+                import traceback
+                print(traceback.format_exc())  # Print full error traceback
                 return file_path
                 
         elif file_ext in ['jpg', 'jpeg', 'png']:
@@ -1490,3 +1494,119 @@ if app:
             await message.reply(" Watermark settings updated successfully!")
         else:
             await message.reply(" Failed to update watermark settings.")
+
+async def handle_watermark(client, message):
+    # Check if user is authorized
+    user_id = message.from_user.id
+    if not await is_user_authorized(user_id):
+        await message.reply("You are not authorized to use watermark settings.")
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        settings = await get_watermark_settings()
+        status = "✅ Enabled" if settings.get("enabled") else "❌ Disabled"
+        position = settings.get("position", "bottom-right")
+        font_size = settings.get("font_size", 36)
+        opacity = settings.get("opacity", 0.7)
+        text = settings.get("text", "").strip()
+        
+        current_settings = (
+            f"📝 **Current Watermark Settings**\n\n"
+            f"• Status: {status}\n"
+            f"• Text: `{text}`\n"
+            f"• Position: `{position}`\n"
+            f"• Font Size: `{font_size}`\n"
+            f"• Opacity: `{opacity}`\n\n"
+            f"**Available Commands:**\n"
+            f"• `/watermark enable` - Enable watermark\n"
+            f"• `/watermark disable` - Disable watermark\n"
+            f"• `/watermark text <text>` - Set watermark text\n"
+            f"• `/watermark position <top-left/top-right/bottom-left/bottom-right/center>`\n"
+            f"• `/watermark size <12-72>` - Set font size\n"
+            f"• `/watermark opacity <0.1-1.0>` - Set opacity\n"
+        )
+        
+        if user_id in OWNER_ID:
+            current_settings += (
+                f"\n**Owner Commands:**\n"
+                f"• `/watermark adduser <user_id>` - Add authorized user\n"
+                f"• `/watermark removeuser <user_id>` - Remove authorized user\n"
+                f"• `/watermark listusers` - List authorized users"
+            )
+        
+        await message.reply(current_settings)
+        return
+
+    command = args[0].split("@")[0].lower()  # Remove bot username if present
+    settings = await get_watermark_settings()
+
+    if command == "enable":
+        settings["enabled"] = True
+    elif command == "disable":
+        settings["enabled"] = False
+    elif command == "text" and len(args) > 1:
+        settings["text"] = " ".join(args[1:]).strip()  # Strip any extra whitespace
+    elif command == "position" and len(args) > 1:
+        pos = args[1].lower()
+        if pos in ["top-left", "top-right", "bottom-left", "bottom-right", "center"]:
+            settings["position"] = pos
+    elif command == "size" and len(args) > 1:
+        try:
+            size = int(args[1])
+            if 12 <= size <= 72:
+                settings["font_size"] = size
+            else:
+                await message.reply("Font size must be between 12 and 72")
+                return
+        except ValueError:
+            await message.reply("Invalid font size")
+            return
+    elif command == "opacity" and len(args) > 1:
+        try:
+            opacity = float(args[1])
+            if 0.1 <= opacity <= 1.0:
+                settings["opacity"] = opacity
+            else:
+                await message.reply("Opacity must be between 0.1 and 1.0")
+                return
+        except ValueError:
+            await message.reply("Invalid opacity value")
+            return
+    elif command == "adduser" and len(args) > 1 and user_id in OWNER_ID:
+        try:
+            target_user_id = int(args[1])
+            if await add_watermark_user(target_user_id):
+                await message.reply(f"User {target_user_id} has been authorized to use watermark feature.")
+            else:
+                await message.reply("Failed to authorize user.")
+            return
+        except ValueError:
+            await message.reply("Invalid user ID format.")
+            return
+    elif command == "removeuser" and len(args) > 1 and user_id in OWNER_ID:
+        try:
+            target_user_id = int(args[1])
+            if await remove_watermark_user(target_user_id):
+                await message.reply(f"User {target_user_id} has been removed from watermark authorized users.")
+            else:
+                await message.reply("Failed to remove user.")
+            return
+        except ValueError:
+            await message.reply("Invalid user ID format.")
+            return
+    elif command == "listusers" and user_id in OWNER_ID:
+        users = await get_watermark_users()
+        if users:
+            user_list = "\n".join([f"• `{uid}`" for uid in users])
+            await message.reply(f"**Authorized Watermark Users:**\n{user_list}")
+        else:
+            await message.reply("No users are authorized to use watermark.")
+        return
+    else:
+        await message.reply("Invalid command. Use /watermark to see available options.")
+        return
+
+    # Save settings
+    await save_watermark_settings(settings)
+    await message.reply("✅ Watermark settings updated successfully!")
