@@ -254,19 +254,14 @@ async def apply_watermark(file_path):
         print(f"Error applying watermark: {e}")  # Debug log
         return file_path
 
-thumbnail(sender):
+def thumbnail(sender):
+    """Get thumbnail path for a sender"""
     thumb_path = f'{sender}.jpg'
     try:
         if os.path.exists(thumb_path):
             return thumb_path
-        # Try to get from MongoDB if file doesn't exist
-        thumb_data = collection.find_one({"user_id": sender})
-        if thumb_data and thumb_data.get("thumb_path"):
-            # If found in DB but file doesn't exist, try to recreate it
-            if os.path.exists(thumb_data["thumb_path"]):
-                return thumb_data["thumb_path"]
-    except Exception as e:
-        print(f"Error getting thumbnail: {e}")
+    except:
+        pass
     return None
 
 # MongoDB database name and collection name
