@@ -36,6 +36,49 @@ from devgagan.core.mongo import db as odb
 from telethon import TelegramClient, events, Button
 from devgagantools import fast_upload
 
+WATERMARK_SETTINGS = "watermark_settings"
+
+async def add_watermark_user(user_id):
+    """Add a user to the authorized watermark users list"""
+    try:
+        db[WATERMARK_SETTINGS].update_one(
+            {"_id": "authorized_users"},
+            {"$addToSet": {"users": user_id}},
+            upsert=True
+        )
+        return True
+    except Exception as e:
+        print(f"Error adding watermark user: {e}")
+        return False
+
+async def remove_watermark_user(user_id):
+    """Remove a user from the authorized watermark users list"""
+    try:
+        db[WATERMARK_SETTINGS].update_one(
+            {"_id": "authorized_users"},
+            {"$pull": {"users": user_id}}
+        )
+        return True
+    except Exception as e:
+        print(f"Error removing watermark user: {e}")
+        return False
+
+async def get_authorized_watermark_users():
+    """Get list of authorized watermark users"""
+    try:
+        doc = db[WATERMARK_SETTINGS].find_one({"_id": "authorized_users"})
+        return set(doc.get("users", [])) if doc else set()
+    except Exception as e:
+        print(f"Error getting authorized users: {e}")
+        return set()
+
+async def is_authorized_for_watermark(user_id):
+    """Check if user is authorized to modify watermark settings"""
+    if user_id in OWNER_ID:
+        return True
+    authorized_users = await get_authorized_watermark_users()
+    return user_id in authorized_users
+
 def thumbnail(sender):
     thumb_path = f'{sender}.jpg'
     try:
@@ -91,16 +134,22 @@ async def format_caption_to_html(caption: str) -> str:
 
 async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
     try:
-        upload_method = await fetch_upload_method(sender)  # Fetch the upload method (Pyrogram or Telethon)
+        upload_method = await fetch_upload_method(sender)
         metadata = video_metadata(file)
         width, height, duration = metadata['width'], metadata['height'], metadata['duration']
         
         # Get thumbnail path and ensure it exists
         thumb_path = thumbnail(sender)
         if not thumb_path:
-            # If no custom thumbnail, try to generate one for videos
             if file.split('.')[-1].lower() in VIDEO_EXTENSIONS:
                 thumb_path = await screenshot(file, duration, sender)
+
+        # Apply watermark if enabled
+        watermark_settings = await get_watermark_settings()
+        if watermark_settings and watermark_settings.get("enabled"):
+            watermarked_file = await apply_watermark(file)
+            if watermarked_file != file:
+                file = watermarked_file
 
         video_formats = {'mp4', 'mkv', 'avi', 'mov'}
         document_formats = {'pdf', 'docx', 'txt', 'epub'}
@@ -187,12 +236,18 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
         print(f"Error during media upload: {e}")
 
     finally:
-        # Only remove screenshot thumbnails, not user-set thumbnails
-        if thumb_path and thumb_path.startswith('temp_'):
-            try:
+        # Cleanup temporary files
+        try:
+            # Only remove screenshot thumbnails, not user-set thumbnails
+            if thumb_path and thumb_path.startswith('temp_'):
                 os.remove(thumb_path)
-            except:
-                pass
+            
+            # Remove watermarked file if it was created
+            if watermark_settings and watermark_settings.get("enabled"):
+                if file != watermarked_file and os.path.exists(watermarked_file):
+                    os.remove(watermarked_file)
+        except:
+            pass
         gc.collect()
 
 
@@ -415,7 +470,7 @@ async def download_user_stories(userbot, chat_id, msg_id, edit, sender):
     except RPCError as e:
         print(f"Failed to fetch story: {e}")
         await edit.edit(f"Error: {e}")
-        
+
 async def copy_message_with_chat_id(app, userbot, sender, chat_id, message_id, edit):
     target_chat_id = user_chat_ids.get(sender, sender)
     file = None
@@ -1135,3 +1190,100 @@ async def split_and_upload_file(app, sender, target_chat_id, file_path, caption,
 
     await start.delete()
     os.remove(file_path)
+
+@app.on_message(filters.command("watermark") & filters.private)
+async def watermark_command(client, message):
+    """Handle watermark command"""
+    user_id = message.from_user.id
+    args = message.text.split()[1:]
+
+    # Only owner can manage users
+    if len(args) >= 2 and args[0].lower() in ['add', 'remove'] and user_id in OWNER_ID:
+        try:
+            target_user_id = int(args[1])
+            if args[0].lower() == 'add':
+                if await add_watermark_user(target_user_id):
+                    await message.reply(f"✅ User {target_user_id} has been authorized to use watermark feature.")
+                else:
+                    await message.reply("❌ Failed to authorize user.")
+            else:  # remove
+                if await remove_watermark_user(target_user_id):
+                    await message.reply(f"✅ User {target_user_id} has been removed from watermark authorized users.")
+                else:
+                    await message.reply("❌ Failed to remove user.")
+            return
+        except ValueError:
+            await message.reply("❌ Invalid user ID format.")
+            return
+
+    # Check authorization for other watermark commands
+    if not await is_authorized_for_watermark(user_id):
+        await message.reply("⚠️ You are not authorized to use watermark settings.")
+        return
+
+    # List authorized users (only for owner)
+    if len(args) == 1 and args[0].lower() == 'users' and user_id in OWNER_ID:
+        authorized_users = await get_authorized_watermark_users()
+        if authorized_users:
+            user_list = "\n".join([f"• `{uid}`" for uid in authorized_users])
+            await message.reply(f"Authorized watermark users:\n{user_list}")
+        else:
+            await message.reply("No additional users are authorized to use watermark.")
+        return
+
+    # Handle other watermark commands as before
+    if not args:
+        settings = await get_watermark_settings()
+        status = "enabled" if settings.get("enabled") else "disabled"
+        await message.reply(
+            f"Current watermark settings:\n"
+            f"Status: {status}\n"
+            f"Text: {settings.get('text')}\n"
+            f"Position: {settings.get('position')}\n"
+            f"Font Size: {settings.get('font_size')}\n"
+            f"Opacity: {settings.get('opacity')}\n"
+            f"\nUse /watermark with these options:\n"
+            f"enable/disable - Toggle watermark\n"
+            f"text <text> - Set watermark text\n"
+            f"position <top-left/top-right/bottom-left/bottom-right>\n"
+            f"size <font_size> - Set font size\n"
+            f"opacity <0.1-1.0> - Set opacity\n"
+            f"\nOwner commands:\n"
+            f"add <user_id> - Authorize a user\n"
+            f"remove <user_id> - Remove user authorization\n"
+            f"users - List authorized users"
+        )
+        return
+
+    command = args[0].lower()
+    settings = await get_watermark_settings()
+    
+    if command in ["enable", "on"]:
+        settings["enabled"] = True
+    elif command in ["disable", "off"]:
+        settings["enabled"] = False
+    elif command == "text" and len(args) > 1:
+        settings["text"] = " ".join(args[1:])
+    elif command == "position" and len(args) > 1:
+        pos = args[1].lower()
+        if pos in ["top-left", "top-right", "bottom-left", "bottom-right"]:
+            settings["position"] = pos
+    elif command == "size" and len(args) > 1:
+        try:
+            size = int(args[1])
+            if 12 <= size <= 72:
+                settings["font_size"] = size
+        except ValueError:
+            pass
+    elif command == "opacity" and len(args) > 1:
+        try:
+            opacity = float(args[1])
+            if 0.1 <= opacity <= 1.0:
+                settings["opacity"] = opacity
+        except ValueError:
+            pass
+
+    if await save_watermark_settings(settings):
+        await message.reply("✅ Watermark settings updated successfully!")
+    else:
+        await message.reply("❌ Failed to update watermark settings.")
