@@ -598,6 +598,137 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
             pass
         gc.collect()
 
+async def get_msg(userbot, sender, edit_id, msg_link, i, message):
+    """Handle message processing and forwarding"""
+    try:
+        # Sanitize the message link
+        msg_link = msg_link.split("?single")[0]
+        chat, msg_id = None, None
+        saved_channel_ids = load_saved_channel_ids()
+        size_limit = 2 * 1024 * 1024 * 1024  # 2GB size limit
+        file = ''
+        edit = ''
+        
+        # Extract chat and message ID for valid Telegram links
+        if 't.me/c/' in msg_link or 't.me/b/' in msg_link:
+            parts = msg_link.split("/")
+            if 't.me/b/' in msg_link:
+                chat = parts[-2]
+                msg_id = int(parts[-1]) + i # fixed bot problem 
+            else:
+                chat = int('-100' + parts[parts.index('c') + 1])
+                msg_id = int(parts[-1]) + i
+
+            if chat in saved_channel_ids:
+                await app.edit_message_text(
+                    message.chat.id, edit_id,
+                    "Sorry! This channel is protected by **__Shimperd__**."
+                )
+                return
+            
+        elif '/s/' in msg_link: # fixed story typo
+            edit = await app.edit_message_text(sender, edit_id, "Story Link Detected...")
+            if userbot is None:
+                await edit.edit("Login in bot save stories...")     
+                return
+            parts = msg_link.split("/")
+            chat = parts[3]
+            
+            if chat.isdigit():   # this is for channel stories
+                chat = f"-100{chat}"
+            
+            msg_id = int(parts[-1])
+            await download_user_stories(userbot, chat, msg_id, edit, sender)
+            await edit.delete(2)
+            return
+            
+        else:
+            edit = await app.edit_message_text(sender, edit_id, "Public link detected...")
+            chat = msg_link.split("t.me/")[1].split("/")[0]
+            msg_id = int(msg_link.split("/")[-1])
+            await copy_message_with_chat_id(app, userbot, sender, chat, msg_id, edit)
+            await edit.delete(2)
+            return
+            
+        # Fetch the target message
+        msg = await userbot.get_messages(chat, msg_id)
+        if not msg or msg.service or msg.empty:
+            return
+
+        target_chat_id = user_chat_ids.get(message.chat.id, message.chat.id)
+        topic_id = None
+        if '/' in str(target_chat_id):
+            target_chat_id, topic_id = map(int, target_chat_id.split('/', 1))
+
+        # Handle different message types
+        if msg.media == MessageMediaType.WEB_PAGE_PREVIEW:
+            await clone_message(app, msg, target_chat_id, topic_id, edit_id, LOG_GROUP)
+            return
+
+        if msg.text:
+            await clone_text_message(app, msg, target_chat_id, topic_id, edit_id, LOG_GROUP)
+            return
+
+        if msg.sticker:
+            await handle_sticker(app, msg, target_chat_id, topic_id, edit_id, LOG_GROUP)
+            return
+
+        # Handle file media (photo, document, video)
+        file_size = get_message_file_size(msg)
+        file_name = await get_media_filename(msg)
+        edit = await app.edit_message_text(sender, edit_id, "**Downloading...**")
+
+        # Download media
+        file = await userbot.download_media(
+            msg,
+            file_name=file_name,
+            progress=progress_bar,
+            progress_args=("╭─────────────────────╮\n│      **__Downloading__...**\n├─────────────────────", edit, time.time())
+        )
+        
+        caption = await get_final_caption(msg, sender)
+
+        # Rename file
+        file = await rename_file(file, sender)
+        if msg.audio:
+            result = await app.send_audio(target_chat_id, file, caption=caption, reply_to_message_id=topic_id)
+            await result.copy(LOG_GROUP)
+            await edit.delete(2)
+            return
+        
+        if msg.voice:
+            result = await app.send_voice(target_chat_id, file, reply_to_message_id=topic_id)
+            await result.copy(LOG_GROUP)
+            await edit.delete(2)
+            return
+
+        if msg.photo:
+            result = await app.send_photo(target_chat_id, file, caption=caption, reply_to_message_id=topic_id)
+            await result.copy(LOG_GROUP)
+            await edit.delete(2)
+            return
+
+        # Upload media
+        if file_size > size_limit and (free_check == 1 or pro is None):
+            await edit.delete()
+            await split_and_upload_file(app, sender, target_chat_id, file, caption, topic_id)
+            return       
+        elif file_size > size_limit:
+            await handle_large_file(file, sender, edit, caption)
+        else:
+            await upload_media(sender, target_chat_id, file, caption, edit, topic_id)
+
+    except (ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid):
+        await app.edit_message_text(sender, edit_id, "Have you joined the channel?")
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        # Clean up
+        if file and os.path.exists(file):
+            os.remove(file)
+        if edit:
+            await edit.delete(2)
+
 # Helper functions
 def thumbnail(sender):
     """Get thumbnail path for a sender"""
