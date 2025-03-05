@@ -87,8 +87,8 @@ async def get_watermark_settings():
             # Default settings
             settings = {
                 "_id": "settings",
-                "enabled": False,
-                "text": " Your Watermark",
+                "enabled": True,
+                "text": "",  # Empty default text
                 "position": "bottom-right",
                 "font_size": 36,
                 "opacity": 0.7
@@ -113,13 +113,18 @@ async def save_watermark_settings(settings):
         return False
 
 async def apply_watermark(file_path):
-    """Apply watermark to image or video"""
     try:
         settings = await get_watermark_settings()
         print(f"Watermark settings: {settings}")  # Debug log
         
         if not settings.get("enabled"):
             print("Watermark is disabled")  # Debug log
+            return file_path
+
+        # Check if text is empty or not set
+        text = settings.get("text", "").strip()
+        if not text:
+            print("No watermark text set")  # Debug log
             return file_path
 
         file_ext = file_path.split('.')[-1].lower()
@@ -1470,7 +1475,14 @@ if app:
         elif command == "disable":
             settings["enabled"] = False
         elif command == "text" and len(args) > 1:
-            settings["text"] = " ".join(args[1:]).strip()  # Strip any extra whitespace
+            text = " ".join(args[1:]).strip()
+            if text:  # Only update if text is not empty
+                settings["text"] = text
+                await save_watermark_settings(settings)
+                await message.reply(f"✅ Watermark text updated to: `{text}`")
+            else:
+                await message.reply("❌ Please provide some text for the watermark")
+            return
         elif command == "position" and len(args) > 1:
             pos = args[1].lower()
             if pos in ["top-left", "top-right", "bottom-left", "bottom-right", "center"]:
@@ -1546,7 +1558,14 @@ async def handle_watermark(client, message):
     elif command == "disable":
         settings["enabled"] = False
     elif command == "text" and len(args) > 1:
-        settings["text"] = " ".join(args[1:]).strip()  # Strip any extra whitespace
+        text = " ".join(args[1:]).strip()
+        if text:  # Only update if text is not empty
+            settings["text"] = text
+            await save_watermark_settings(settings)
+            await message.reply(f"✅ Watermark text updated to: `{text}`")
+        else:
+            await message.reply("❌ Please provide some text for the watermark")
+        return
     elif command == "position" and len(args) > 1:
         pos = args[1].lower()
         if pos in ["top-left", "top-right", "bottom-left", "bottom-right", "center"]:
