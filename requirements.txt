@@ -20,3 +20,5 @@ telethon-tgcrypto
 mutagen
 yt-dlp
 speedtest-cli
+PyPDF2
+reportlab
