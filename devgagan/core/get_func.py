@@ -150,17 +150,24 @@ async def is_user_authorized(user_id):
 
 async def apply_watermark(input_path, output_path, settings=None):
     """Apply watermark to file based on type"""
-    if not settings:
-        settings = await get_watermark_settings()
-    
-    if not settings.get("enabled", True) or not settings.get("text"):
-        # If watermark is disabled or text is empty, just copy the file
-        shutil.copy2(input_path, output_path)
-        return True
-
-    file_ext = os.path.splitext(input_path)[1].lower()
-    
     try:
+        if not settings:
+            settings = await get_watermark_settings()
+            print(f"Retrieved watermark settings: {settings}")
+        
+        if not settings.get("enabled", True):
+            print("Watermark is disabled")
+            shutil.copy2(input_path, output_path)
+            return True
+            
+        if not settings.get("text"):
+            print("No watermark text configured")
+            shutil.copy2(input_path, output_path)
+            return True
+
+        file_ext = os.path.splitext(input_path)[1].lower()
+        print(f"Processing file with extension: {file_ext}")
+        
         if file_ext in ['.jpg', '.jpeg', '.png']:
             return await apply_image_watermark(input_path, output_path, settings)
         elif file_ext == '.pdf':
@@ -168,7 +175,7 @@ async def apply_watermark(input_path, output_path, settings=None):
         elif file_ext in ['.mp4', '.avi', '.mov']:
             return await apply_video_watermark(input_path, output_path, settings)
         else:
-            # Unsupported file type, just copy
+            print(f"Unsupported file type: {file_ext}")
             shutil.copy2(input_path, output_path)
             return True
     except Exception as e:
@@ -183,6 +190,7 @@ async def apply_image_watermark(input_path, output_path, settings):
         from PIL import Image, ImageDraw, ImageFont
         import math
 
+        print("Opening image for watermarking")
         # Open image
         with Image.open(input_path) as img:
             # Convert to RGBA
@@ -192,16 +200,32 @@ async def apply_image_watermark(input_path, output_path, settings):
             txt = Image.new('RGBA', img.size, (255,255,255,0))
             draw = ImageDraw.Draw(txt)
 
-            # Load font
+            # Load font with fallback options
             font_size = settings.get('font_size', 36)
-            try:
-                font = ImageFont.truetype("arial.ttf", font_size)
-            except:
+            font = None
+            font_paths = [
+                "arial.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/System/Library/Fonts/Helvetica.ttc"
+            ]
+            
+            for font_path in font_paths:
+                try:
+                    font = ImageFont.truetype(font_path, font_size)
+                    print(f"Successfully loaded font: {font_path}")
+                    break
+                except:
+                    continue
+            
+            if font is None:
+                print("Using default font as no system fonts were found")
                 font = ImageFont.load_default()
 
             text = settings.get('text', '')
             position = settings.get('position', 'bottom-right')
             opacity = int(255 * settings.get('opacity', 0.7))
+
+            print(f"Applying watermark with text: {text}, position: {position}, opacity: {opacity}")
 
             # Get text size
             text_bbox = draw.textbbox((0, 0), text, font=font)
@@ -228,8 +252,13 @@ async def apply_image_watermark(input_path, output_path, settings):
             watermarked = Image.alpha_composite(img, txt)
             watermarked = watermarked.convert('RGB')
             
-            # Save
+            print(f"Saving watermarked image to: {output_path}")
+            # Save with high quality
             watermarked.save(output_path, quality=95)
+            
+            if not os.path.exists(output_path):
+                raise Exception("Failed to save watermarked image")
+                
             return True
     except Exception as e:
         print(f"Error applying image watermark: {e}")
@@ -243,6 +272,8 @@ async def apply_pdf_watermark(input_path, output_path, settings):
         from reportlab.lib.pagesizes import letter
         import io
 
+        print("Opening PDF for watermarking")
+        
         # Create watermark
         packet = io.BytesIO()
         c = canvas.Canvas(packet, pagesize=letter)
@@ -251,6 +282,8 @@ async def apply_pdf_watermark(input_path, output_path, settings):
         position = settings.get('position', 'bottom-right')
         font_size = settings.get('font_size', 36)
         opacity = settings.get('opacity', 0.7)
+
+        print(f"Applying watermark with text: {text}, position: {position}, opacity: {opacity}")
 
         # Position mapping
         positions = {
@@ -263,28 +296,57 @@ async def apply_pdf_watermark(input_path, output_path, settings):
         
         x, y = positions.get(position, positions['bottom-right'])
         
-        c.setFont("Helvetica", font_size)
+        # Try different fonts
+        fonts = ['Helvetica', 'Times-Roman', 'Courier']
+        font_used = None
+        
+        for font in fonts:
+            try:
+                c.setFont(font, font_size)
+                font_used = font
+                print(f"Using font: {font}")
+                break
+            except:
+                continue
+                
+        if not font_used:
+            print("No standard fonts available, using default")
+            c.setFont("Helvetica", font_size)
+            
         c.setFillAlpha(opacity)
         c.drawString(x, y, text)
         c.save()
+
+        print("Created watermark overlay")
 
         # Move to beginning of StringIO buffer
         packet.seek(0)
         watermark = PdfReader(packet)
         
         # Read original PDF
+        print(f"Reading original PDF: {input_path}")
         original = PdfReader(input_path)
         output = PdfWriter()
 
         # Add watermark to each page
-        for page in original.pages:
+        total_pages = len(original.pages)
+        print(f"Processing {total_pages} pages")
+        
+        for i, page in enumerate(original.pages):
             page.merge_page(watermark.pages[0])
             output.add_page(page)
+            if (i + 1) % 10 == 0:
+                print(f"Processed {i + 1}/{total_pages} pages")
 
         # Write output
+        print(f"Saving watermarked PDF to: {output_path}")
         with open(output_path, 'wb') as out_file:
             output.write(out_file)
             
+        if not os.path.exists(output_path):
+            raise Exception("Failed to save watermarked PDF")
+            
+        print("Successfully completed PDF watermarking")
         return True
     except Exception as e:
         print(f"Error applying PDF watermark: {e}")
@@ -296,6 +358,7 @@ async def apply_video_watermark(input_path, output_path, settings):
         import cv2
         import numpy as np
         
+        print("Opening video for watermarking")
         # Open video
         cap = cv2.VideoCapture(input_path)
         if not cap.isOpened():
@@ -307,15 +370,35 @@ async def apply_video_watermark(input_path, output_path, settings):
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        # Create video writer
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        print(f"Video properties - Width: {width}, Height: {height}, FPS: {fps}, Total Frames: {total_frames}")
+
+        # Try different codecs
+        codecs = ['mp4v', 'avc1', 'H264']
+        out = None
+        
+        for codec in codecs:
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*codec)
+                test_out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+                if test_out.isOpened():
+                    out = test_out
+                    print(f"Successfully opened video writer with codec: {codec}")
+                    break
+                test_out.release()
+            except Exception as e:
+                print(f"Failed to use codec {codec}: {e}")
+                continue
+        
+        if out is None:
+            raise Exception("Could not find a working codec")
 
         # Prepare text properties
         text = settings.get('text', '')
         position = settings.get('position', 'bottom-right')
         font_size = settings.get('font_size', 36) / 36  # Scale down for CV2
         opacity = settings.get('opacity', 0.7)
+        
+        print(f"Applying watermark with text: {text}, position: {position}, opacity: {opacity}")
         
         # Get text size
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -365,6 +448,7 @@ async def apply_video_watermark(input_path, output_path, settings):
             print("Error: Output video file is empty or does not exist")
             return False
             
+        print("Successfully completed video watermarking")
         return True
         
     except Exception as e:
