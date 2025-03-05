@@ -129,7 +129,78 @@ async def apply_watermark(file_path):
         output_path = f"{file_path[:-len(file_ext)-1]}_watermarked.{file_ext}"
         print(f"Output path: {output_path}")  # Debug log
         
-        if file_ext in ['jpg', 'jpeg', 'png']:
+        if file_ext == 'pdf':
+            print("Processing PDF file")  # Debug log
+            try:
+                from PyPDF2 import PdfReader, PdfWriter
+                from reportlab.pdfgen import canvas
+                from reportlab.lib.pagesizes import letter
+                import io
+                
+                # Create watermark
+                packet = io.BytesIO()
+                c = canvas.Canvas(packet, pagesize=letter)
+                text = settings.get("text", " Your Watermark")
+                
+                # Get page size from first page
+                pdf = PdfReader(file_path)
+                if len(pdf.pages) > 0:
+                    page = pdf.pages[0]
+                    width = float(page.mediabox.width)
+                    height = float(page.mediabox.height)
+                else:
+                    width, height = letter
+                
+                # Calculate position
+                position = settings.get("position", "bottom-right")
+                font_size = settings.get("font_size", 36)
+                padding = 30
+                
+                if position == "top-left":
+                    x, y = padding, height - padding
+                elif position == "top-right":
+                    x, y = width - padding, height - padding
+                elif position == "bottom-left":
+                    x, y = padding, padding + font_size
+                else:  # bottom-right
+                    x, y = width - padding, padding + font_size
+                
+                # Set transparency
+                opacity = settings.get("opacity", 0.7)
+                c.setFillAlpha(opacity)
+                
+                # Add text
+                c.setFont("Helvetica", font_size)
+                c.setFillColorRGB(0.5, 0.5, 0.5)  # Gray color
+                c.drawString(x, y, text)
+                c.save()
+                
+                # Move to the beginning of the StringIO buffer
+                packet.seek(0)
+                watermark = PdfReader(packet)
+                
+                # Read the existing PDF
+                existing_pdf = PdfReader(file_path)
+                output = PdfWriter()
+                
+                # Add watermark to each page
+                for i in range(len(existing_pdf.pages)):
+                    page = existing_pdf.pages[i]
+                    page.merge_page(watermark.pages[0])
+                    output.add_page(page)
+                
+                # Write the watermarked file
+                with open(output_path, 'wb') as outputStream:
+                    output.write(outputStream)
+                
+                print(f"PDF saved with watermark: {output_path}")  # Debug log
+                return output_path
+                
+            except Exception as e:
+                print(f"Error processing PDF: {e}")  # Debug log
+                return file_path
+                
+        elif file_ext in ['jpg', 'jpeg', 'png']:
             print("Processing image file")  # Debug log
             # Image watermarking
             from PIL import Image, ImageDraw, ImageFont
