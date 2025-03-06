@@ -12,42 +12,38 @@
 # License: MIT License
 # ---------------------------------------------------
 
-from datetime import datetime
-from devgagan.core.mongo.db import premium_users
-
+import datetime
+from motor.motor_asyncio import AsyncIOMotorClient as MongoCli
+from config import MONGO_DB
+ 
+mongo = MongoCli(MONGO_DB)
+db = mongo.premium
+db = db.premium_db
+ 
+async def add_premium(user_id, expire_date):
+    data = await check_premium(user_id)
+    if data and data.get("_id"):
+        await db.update_one({"_id": user_id}, {"$set": {"expire_date": expire_date}})
+    else:
+        await db.insert_one({"_id": user_id, "expire_date": expire_date})
+ 
+async def remove_premium(user_id):
+    await db.delete_one({"_id": user_id})
+ 
+async def check_premium(user_id):
+    return await db.find_one({"_id": user_id})
+ 
+async def premium_users():
+    id_list = []
+    async for data in db.find():
+        id_list.append(data["_id"])
+    return id_list
+ 
 async def check_and_remove_expired_users():
-    """Check and remove expired premium users."""
-    try:
-        # Find all expired premium users
-        current_time = datetime.utcnow()
-        expired_users = await premium_users.find({
-            'expiry_date': {'$lte': current_time}
-        }).to_list(length=None)
-        
-        # Remove expired users
-        if expired_users:
-            for user in expired_users:
-                await premium_users.delete_one({'user_id': user['user_id']})
-                
-        return expired_users
-        
-    except Exception as e:
-        print(f"Error checking expired users: {e}")
-        return []
-
-async def get_premium_users():
-    """Get all premium users."""
-    try:
-        users = await premium_users.find().to_list(length=None)
-        return [user['user_id'] for user in users]
-    except Exception as e:
-        print(f"Error getting premium users: {e}")
-        return []
-
-async def check_premium(user_id: int):
-    """Check if a user has premium access."""
-    try:
-        return await premium_users.find_one({'user_id': user_id})
-    except Exception as e:
-        print(f"Error checking premium status: {e}")
-        return None
+    current_time = datetime.datetime.utcnow()
+    async for data in db.find():
+        expire_date = data.get("expire_date")
+        if expire_date and expire_date < current_time:
+            await remove_premium(data["_id"])
+            print(f"Removed user {data['_id']} due to expired plan.")
+ 
