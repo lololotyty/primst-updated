@@ -37,11 +37,15 @@ from telethon import TelegramClient, events, Button
 from devgagantools import fast_upload
 
 def thumbnail(sender):
-    return f'{sender}.jpg' if os.path.exists(f'{sender}.jpg') else None
+    thumb_path = f'{sender}.jpg'
+    return thumb_path if os.path.exists(thumb_path) else None
 
-# MongoDB database name and collection name
-DB_NAME = "smart_users"
-COLLECTION_NAME = "super_user"
+async def get_custom_thumbnail(sender):
+    """Get custom thumbnail for the user, with fallback to auto-generated thumbnail"""
+    thumb_path = thumbnail(sender)
+    if thumb_path:
+        return thumb_path
+    return None
 
 VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'flv', 'wmv', 'webm', 'mpg', 'mpeg', '3gp', 'ts', 'm4v', 'f4v', 'vob']
 DOCUMENT_EXTENSIONS = ['pdf', 'docs']
@@ -82,7 +86,11 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
         upload_method = await fetch_upload_method(sender)  # Fetch the upload method (Pyrogram or Telethon)
         metadata = video_metadata(file)
         width, height, duration = metadata['width'], metadata['height'], metadata['duration']
-        thumb_path = await screenshot(file, duration, sender)
+        
+        # Get custom thumbnail or generate from video
+        thumb_path = await get_custom_thumbnail(sender)
+        if not thumb_path and file.split('.')[-1].lower() in {'mp4', 'mkv', 'avi', 'mov'}:
+            thumb_path = await screenshot(file, duration, sender)
 
         video_formats = {'mp4', 'mkv', 'avi', 'mov'}
         document_formats = {'pdf', 'docx', 'txt', 'epub'}
@@ -122,7 +130,7 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
                     chat_id=target_chat_id,
                     document=file,
                     caption=caption,
-                    thumb=thumb_path,
+                    thumb=thumb_path,  # Apply thumbnail to documents too
                     reply_to_message_id=topic_id,
                     progress=progress_bar,
                     parse_mode=ParseMode.MARKDOWN,
