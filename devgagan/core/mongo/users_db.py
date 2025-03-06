@@ -12,48 +12,67 @@
 # License: MIT License
 # ---------------------------------------------------
 
-from config import MONGO_DB
-from motor.motor_asyncio import AsyncIOMotorClient as MongoCli
+from devgagan.core.mongo import db
+from config import OWNER_ID
 
+users = db.users
+watermark_users = db.watermark_users
 
-mongo = MongoCli(MONGO_DB)
-db = mongo.users
-db = db.users_db
+async def is_verified_user(user_id: int) -> bool:
+    """Check if a user is verified."""
+    try:
+        user = await users.find_one({'user_id': user_id})
+        return bool(user)
+    except Exception as e:
+        print(f"Error checking user verification: {e}")
+        return False
 
-# Collection for watermark permissions
-watermark_users = db['watermark_users']
+async def get_users() -> list:
+    """Get all users."""
+    try:
+        user_list = await users.find().to_list(length=None)
+        return [user['user_id'] for user in user_list]
+    except Exception as e:
+        print(f"Error getting users: {e}")
+        return []
 
-async def get_users():
-  user_list = []
-  async for user in db.users.find({"user": {"$gt": 0}}):
-    user_list.append(user['user'])
-  return user_list
+async def add_user(user_id: int) -> bool:
+    """Add a new user."""
+    try:
+        result = await users.update_one(
+            {'user_id': user_id},
+            {'$set': {'user_id': user_id}},
+            upsert=True
+        )
+        return True
+    except Exception as e:
+        print(f"Error adding user: {e}")
+        return False
 
+async def remove_user(user_id: int) -> bool:
+    """Remove a user."""
+    try:
+        result = await users.delete_one({'user_id': user_id})
+        return result.deleted_count > 0
+    except Exception as e:
+        print(f"Error removing user: {e}")
+        return False
 
-async def get_user(user):
-  users = await get_users()
-  if user in users:
-    return True
-  else:
-    return False
-
-async def add_user(user):
-  users = await get_users()
-  if user in users:
-    return
-  else:
-    await db.users.insert_one({"user": user})
-
-
-async def del_user(user):
-  users = await get_users()
-  if not user in users:
-    return
-  else:
-    await db.users.delete_one({"user": user})
+async def is_watermark_user(user_id: int) -> bool:
+    """Check if a user has watermark permission."""
+    try:
+        # Owner always has watermark permission
+        if user_id == OWNER_ID:
+            return True
+            
+        user = await watermark_users.find_one({'user_id': user_id})
+        return bool(user)
+    except Exception as e:
+        print(f"Error checking watermark permission: {e}")
+        return False
 
 async def add_watermark_user(user_id: int) -> bool:
-    """Add a user to watermark permissions."""
+    """Grant watermark permission to a user."""
     try:
         result = await watermark_users.update_one(
             {'user_id': user_id},
@@ -66,19 +85,14 @@ async def add_watermark_user(user_id: int) -> bool:
         return False
 
 async def remove_watermark_user(user_id: int) -> bool:
-    """Remove a user from watermark permissions."""
+    """Remove watermark permission from a user."""
     try:
+        # Cannot remove owner's watermark permission
+        if user_id == OWNER_ID:
+            return False
+            
         result = await watermark_users.delete_one({'user_id': user_id})
         return result.deleted_count > 0
     except Exception as e:
         print(f"Error removing watermark user: {e}")
-        return False
-
-async def is_watermark_user(user_id: int) -> bool:
-    """Check if a user has watermark permissions."""
-    try:
-        user = await watermark_users.find_one({'user_id': user_id})
-        return bool(user)
-    except Exception as e:
-        print(f"Error checking watermark user: {e}")
         return False
