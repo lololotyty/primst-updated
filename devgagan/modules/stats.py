@@ -19,6 +19,7 @@ import sys
 import motor
 from devgagan import app
 from pyrogram import filters
+from devgagan.core.mongo.db import users, premium_users, watermark_users
 from config import OWNER_ID
 from devgagan.core.mongo.users_db import get_users, add_user, get_user
 from devgagan.core.mongo.plans_db import premium_users
@@ -60,22 +61,32 @@ def time_formatter():
         return "0 s"
 
 
-@app.on_message(filters.command("stats") & filters.user(OWNER_ID))
-async def stats(client, message):
-    start = time.time()
-    users = len(await get_users())
-    premium = await premium_users()
-    ping = round((time.time() - start) * 1000)
-    await message.reply_text(f"""
-**Stats of** {(await client.get_me()).mention} :
-
-🏓 **Ping Pong**: {ping}ms
-
-📊 **Total Users** : `{users}`
-📈 **Premium Users** : `{len(premium)}`
-⚙️ **Bot Uptime** : `{time_formatter()}`
-    
-🎨 **Python Version**: `{sys.version.split()[0]}`
-📑 **Mongo Version**: `{motor.version}`
-""")
-  
+@app.on_message(filters.command("stats"))
+async def stats_handler(client, message):
+    """Handle the /stats command to show bot statistics."""
+    try:
+        user_id = message.from_user.id
+        
+        # Only owner can view stats
+        if user_id != OWNER_ID:
+            await message.reply("⚠️ Only the bot owner can view statistics.")
+            return
+            
+        # Get counts from each collection
+        total_users = await users.count_documents({})
+        premium_count = await premium_users.count_documents({})
+        watermark_count = await watermark_users.count_documents({})
+        
+        # Format statistics message
+        stats_text = (
+            "📊 **Bot Statistics**\n\n"
+            f"👥 Total Users: `{total_users}`\n"
+            f"💎 Premium Users: `{premium_count}`\n"
+            f"🖼 Watermark Users: `{watermark_count}`\n"
+        )
+        
+        await message.reply(stats_text)
+        
+    except Exception as e:
+        print(f"Error in stats handler: {e}")
+        await message.reply("❌ Failed to fetch statistics. Please try again later.")
