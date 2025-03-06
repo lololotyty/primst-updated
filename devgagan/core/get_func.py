@@ -13,37 +13,45 @@
 # Improved logic handles
 # ---------------------------------------------------
 
-from pyrogram import Client
-from pyrogram.enums import ParseMode
-from devgagan import app, pro, sex
+import asyncio
+import time
+import gc
+import os
+import re
+from typing import Callable
+from devgagan import app
+import aiofiles
+from devgagan import sex as gf
+from telethon.tl.types import DocumentAttributeVideo, Message
+from telethon.sessions import StringSession
+import pymongo
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.errors import ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid
+from pyrogram.enums import MessageMediaType, ParseMode
+from devgagan.core.func import *
+from pyrogram.errors import RPCError
+from pyrogram.types import Message
+from config import MONGO_DB as MONGODB_CONNECTION_STRING, LOG_GROUP, OWNER_ID, STRING, API_ID, API_HASH
 from devgagan.core.mongo import db as odb
 from telethon import TelegramClient, events, Button
 from devgagantools import fast_upload
-import shutil
-import math
-import time
-import os
-import asyncio
-import gc
-import re
-import pymongo
-from typing import Callable
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from pyrogram.errors import ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid
-from pyrogram.types import Message
-from config import MONGO_DB as MONGODB_CONNECTION_STRING, LOG_GROUP, OWNER_ID, STRING, API_ID, API_HASH
+
+def thumbnail(sender):
+    return f'{sender}.jpg' if os.path.exists(f'{sender}.jpg') else None
 
 # MongoDB database name and collection name
 DB_NAME = "smart_users"
-collection = odb[DB_NAME]
+COLLECTION_NAME = "super_user"
 
 VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'flv', 'wmv', 'webm', 'mpg', 'mpeg', '3gp', 'ts', 'm4v', 'f4v', 'vob']
 DOCUMENT_EXTENSIONS = ['pdf', 'docs']
 
 mongo_app = pymongo.MongoClient(MONGODB_CONNECTION_STRING)
 db = mongo_app[DB_NAME]
+collection = db[COLLECTION_NAME]
 
 if STRING:
+    from devgagan import pro
     print("App imported by shimperd.")
 else:
     pro = None
@@ -71,118 +79,111 @@ async def format_caption_to_html(caption: str) -> str:
 
 async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
     try:
-        start_time = time.time()
-        upload_method = await fetch_upload_method(sender)
+        upload_method = await fetch_upload_method(sender)  # Fetch the upload method (Pyrogram or Telethon)
         metadata = video_metadata(file)
         width, height, duration = metadata['width'], metadata['height'], metadata['duration']
         
-        # Get custom thumbnail and ensure it exists for each upload
-        thumb_path = await get_custom_thumbnail(sender)
-        if thumb_path:
-            new_thumb_path = f"{thumb_path}_{os.path.basename(file)}"
-            shutil.copy2(thumb_path, new_thumb_path)
-            thumb_path = new_thumb_path
-        elif file.split('.')[-1].lower() in {'mp4', 'mkv', 'avi', 'mov'}:
+        # Get user's saved thumbnail or generate one
+        thumb_path = thumbnail(sender)
+        if not thumb_path and file.split('.')[-1].lower() in {'mp4', 'mkv', 'avi', 'mov'}:
             thumb_path = await screenshot(file, duration, sender)
-
-        # Apply watermark if set
-        watermark_text = await get_user_watermark(sender)
-        if watermark_text:
-            file = await apply_watermark(file, watermark_text, sender)
 
         video_formats = {'mp4', 'mkv', 'avi', 'mov'}
         document_formats = {'pdf', 'docx', 'txt', 'epub'}
         image_formats = {'jpg', 'png', 'jpeg'}
-        
-        file_ext = file.split('.')[-1].lower()
-        
-        if not os.path.exists(file):
-            await edit.edit("❌ File not found. Download may have failed.")
-            return
 
-        try:
-            if upload_method == "telethon":
-                progress_message = await app2.send_message(sender, "**Uploading...**")
-                try:
-                    if file_ext in video_formats:
-                        await app2.send_file(
-                            target_chat_id,
-                            file=file,
-                            thumb=thumb_path,
-                            caption=caption,
-                            force_document=False,
-                            reply_to=topic_id,
-                            progress_callback=lambda d, t: asyncio.get_event_loop().create_task(
-                                progress_bar(d, t, progress_message, start_time)
-                            )
-                        )
-                    else:
-                        await app2.send_file(
-                            target_chat_id,
-                            file=file,
-                            thumb=thumb_path if file_ext not in image_formats else None,
-                            caption=caption,
-                            force_document=True,
-                            reply_to=topic_id,
-                            progress_callback=lambda d, t: asyncio.get_event_loop().create_task(
-                                progress_bar(d, t, progress_message, start_time)
-                            )
-                        )
-                finally:
-                    await progress_message.delete()
+        # Pyrogram upload
+        if upload_method == "Pyrogram":
+            if file.split('.')[-1].lower() in video_formats:
+                dm = await app.send_video(
+                    chat_id=target_chat_id,
+                    video=file,
+                    caption=caption,
+                    height=height,
+                    width=width,
+                    duration=duration,
+                    thumb=thumb_path,
+                    reply_to_message_id=topic_id,
+                    parse_mode=ParseMode.MARKDOWN,
+                    progress=progress_bar,
+                    progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
+                )
+                await dm.copy(LOG_GROUP)
+                
+            elif file.split('.')[-1].lower() in image_formats:
+                dm = await app.send_photo(
+                    chat_id=target_chat_id,
+                    photo=file,
+                    caption=caption,
+                    thumb=thumb_path,
+                    parse_mode=ParseMode.MARKDOWN,
+                    progress=progress_bar,
+                    reply_to_message_id=topic_id,
+                    progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
+                )
+                await dm.copy(LOG_GROUP)
             else:
-                if file_ext in video_formats:
-                    await app.send_video(
-                        target_chat_id,
-                        video=file,
-                        thumb=thumb_path,
-                        caption=caption,
-                        duration=duration,
-                        width=width,
-                        height=height,
-                        reply_to_message_id=topic_id,
-                        progress=progress_bar,
-                        progress_args=(edit, start_time)
-                    )
-                elif file_ext in image_formats:
-                    await app.send_photo(
-                        target_chat_id,
-                        photo=file,
-                        caption=caption,
-                        reply_to_message_id=topic_id,
-                        progress=progress_bar,
-                        progress_args=(edit, start_time)
-                    )
-                else:
-                    await app.send_document(
-                        target_chat_id,
-                        document=file,
-                        thumb=thumb_path,
-                        caption=caption,
-                        reply_to_message_id=topic_id,
-                        progress=progress_bar,
-                        progress_args=(edit, start_time)
-                    )
-        except Exception as upload_error:
-            error_msg = f"Upload Error: {str(upload_error)}"
-            await app.send_message(sender, error_msg)
-            await app.send_message(LOG_GROUP, error_msg)
-            raise upload_error
+                dm = await app.send_document(
+                    chat_id=target_chat_id,
+                    document=file,
+                    caption=caption,
+                    thumb=thumb_path,
+                    reply_to_message_id=topic_id,
+                    progress=progress_bar,
+                    parse_mode=ParseMode.MARKDOWN,
+                    progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
+                )
+                await asyncio.sleep(2)
+                await dm.copy(LOG_GROUP)
+
+        # Telethon upload
+        elif upload_method == "Telethon":
+            await edit.delete()
+            progress_message = await gf.send_message(sender, "**__Uploading...__**")
+            caption = await format_caption_to_html(caption)
+            uploaded = await fast_upload(
+                gf, file,
+                reply=progress_message,
+                name=None,
+                progress_bar_function=lambda done, total: progress_callback(done, total, sender)
+            )
+            await progress_message.delete()
+
+            attributes = [
+                DocumentAttributeVideo(
+                    duration=duration,
+                    w=width,
+                    h=height,
+                    supports_streaming=True
+                )
+            ] if file.split('.')[-1].lower() in video_formats else []
+
+            await gf.send_file(
+                target_chat_id,
+                uploaded,
+                caption=caption,
+                attributes=attributes,
+                reply_to=topic_id,
+                thumb=thumb_path
+            )
+            await gf.send_file(
+                LOG_GROUP,
+                uploaded,
+                caption=caption,
+                attributes=attributes,
+                thumb=thumb_path
+            )
 
     except Exception as e:
-        error_msg = f"Media Processing Error: {str(e)}"
-        await app.send_message(sender, error_msg)
-        await app.send_message(LOG_GROUP, error_msg)
-        raise e
+        await app.send_message(LOG_GROUP, f"**Upload Failed:** {str(e)}")
+        print(f"Error during media upload: {e}")
+
     finally:
-        # Cleanup temporary files
-        try:
-            if thumb_path and thumb_path.endswith(os.path.basename(file)):
-                os.remove(thumb_path)
-            if watermark_text and file.endswith('_watermarked.' + file_ext):
-                os.remove(file)
-        except Exception as cleanup_error:
-            print(f"Cleanup Error: {str(cleanup_error)}")
+        # Only remove auto-generated thumbnails, not user-set ones
+        if thumb_path and os.path.exists(thumb_path) and thumb_path != f'{sender}.jpg':
+            os.remove(thumb_path)
+        gc.collect()
+
 
 async def get_msg(userbot, sender, edit_id, msg_link, i, message):
     try:
@@ -648,23 +649,9 @@ async def callback_query_handler(event):
         await event.respond('Please send the photo you want to set as the thumbnail.')
     
     elif event.data == b'pdfwt':
-        # Check if user is premium
-        if await is_user_verified(user_id):
-            await event.respond("Send me the watermark text for PDF files:")
-            sessions[user_id] = 'pdfwatermark'
-        else:
-            await event.respond("PDF Watermark feature is only available for Premium users. Contact @shimps_bot to upgrade.")
+        await event.respond("Watermark is Pro+ Plan.. contact @shimps_bot")
         return
 
-    elif event.data == b'watermark':
-        # Check if user is premium
-        if await is_user_verified(user_id):
-            await event.respond("Send me the watermark text you want to apply to your videos/PDFs:")
-            sessions[user_id] = 'watermark'
-        else:
-            await event.respond("Watermark feature is only available for Premium users. Contact @shimps_bot to upgrade.")
-        return
-    
     elif event.data == b'uploadmethod':
         # Retrieve the user's current upload method (default to Pyrogram)
         user_data = collection.find_one({'user_id': user_id})
@@ -805,16 +792,6 @@ async def handle_user_input(event):
             await event.respond(f"Words added to delete list: {', '.join(words_to_delete)}")
                
             
-        elif session_type == 'watermark':
-            watermark_text = event.text
-            await set_watermark(user_id, watermark_text)
-            await event.respond(f"Video watermark text set to: {watermark_text}")
-            
-        elif session_type == 'pdfwatermark':
-            watermark_text = event.text
-            await set_watermark(user_id, watermark_text)
-            await event.respond(f"PDF watermark text set to: {watermark_text}")
-            
         del sessions[user_id]
     
 # Command to store channel IDs
@@ -923,90 +900,6 @@ async def handle_large_file(file, sender, edit, caption):
         gc.collect()
         return
 
-async def apply_watermark(file_path, watermark_text, sender):
-    """Apply watermark to video or PDF files"""
-    try:
-        file_ext = file_path.split('.')[-1].lower()
-        
-        if file_ext in ['mp4', 'mkv', 'avi', 'mov']:
-            # Video watermark using ffmpeg
-            watermark_position = "5:5"  # Top-left corner
-            font_size = "24"
-            font_color = "white"
-            
-            cmd = [
-                'ffmpeg', '-i', file_path,
-                '-vf', f"drawtext=text='{watermark_text}':x={watermark_position.split(':')[0]}:y={watermark_position.split(':')[1]}:fontsize={font_size}:fontcolor={font_color}:box=1:boxcolor=black@0.5",
-                '-codec:a', 'copy',
-                f'{file_path}_watermarked.{file_ext}'
-            ]
-            
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            await process.communicate()
-            
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            return f'{file_path}_watermarked.{file_ext}'
-            
-        elif file_ext == 'pdf':
-            # PDF watermark using PyPDF2
-            from PyPDF2 import PdfFileWriter, PdfFileReader
-            from reportlab.pdfgen import canvas
-            from reportlab.lib.pagesizes import letter
-            
-            # Create watermark
-            c = canvas.Canvas('watermark.pdf', pagesize=letter)
-            c.setFont("Helvetica", 60)
-            c.setFillColorRGB(0.5, 0.5, 0.5)  # Gray color
-            c.saveState()
-            c.translate(300, 400)
-            c.rotate(45)
-            c.drawString(0, 0, watermark_text)
-            c.restoreState()
-            c.save()
-            
-            # Apply watermark to PDF
-            with open(file_path, 'rb') as file:
-                reader = PdfFileReader(file)
-                writer = PdfFileWriter()
-                
-                watermark = PdfFileReader('watermark.pdf')
-                for i in range(reader.getNumPages()):
-                    page = reader.getPage(i)
-                    page.mergePage(watermark.getPage(0))
-                    writer.addPage(page)
-                
-                with open(f'{file_path}_watermarked.{file_ext}', 'wb') as output_file:
-                    writer.write(output_file)
-            
-            # Cleanup
-            os.remove('watermark.pdf')
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            return f'{file_path}_watermarked.{file_ext}'
-            
-        return file_path
-    except Exception as e:
-        print(f"Error applying watermark: {e}")
-        return file_path
-
-async def get_user_watermark(user_id):
-    """Get user's watermark settings"""
-    user_data = collection.find_one({"user_id": user_id})
-    return user_data.get("watermark_text") if user_data else None
-
-async def set_watermark(user_id, watermark_text):
-    """Save user's watermark settings"""
-    collection.update_one(
-        {"user_id": user_id},
-        {"$set": {"watermark_text": watermark_text}},
-        upsert=True
-    )
-
 async def rename_file(file, sender):
     delete_words = load_delete_words(sender)
     custom_rename_tag = get_user_rename_preference(sender)
@@ -1060,38 +953,130 @@ async def is_file_size_exceeding(file_path, size_limit):
 
 user_progress = {}
 
-async def progress_bar(current, total, up_msg, start):
-    """Show progress bar for upload/download"""
-    try:
-        if not up_msg or not total:
-            return
-            
-        now = time.time()
-        diff = now - start
-        
-        # Only update every 2 seconds to avoid flood
-        if diff < 2:
-            return
-            
-        speed = current / diff if diff > 0 else 0
-        percentage = (current * 100) / total
-        
-        progress = "".join("●" for _ in range(math.floor(percentage / 10)))
-        progress += "".join("○" for _ in range(10 - math.floor(percentage / 10)))
-        
-        text = f"""**Progress:** {round(percentage, 2)}%
-[{progress}]
-**Speed:** {humanbytes(speed)}/s
-**Done:** {humanbytes(current)} of {humanbytes(total)}
-**Time Left:** {TimeFormatter(int((total - current) / speed)) if speed > 0 else '0s'}"""
+def progress_callback(done, total, user_id):
+    # Check if this user already has progress tracking
+    if user_id not in user_progress:
+        user_progress[user_id] = {
+            'previous_done': 0,
+            'previous_time': time.time()
+        }
+    
+    # Retrieve the user's tracking data
+    user_data = user_progress[user_id]
+    
+    # Calculate the percentage of progress
+    percent = (done / total) * 100
+    
+    # Format the progress bar
+    completed_blocks = int(percent // 10)
+    remaining_blocks = 10 - completed_blocks
+    progress_bar = "♦" * completed_blocks + "◇" * remaining_blocks
+    
+    # Convert done and total to MB for easier reading
+    done_mb = done / (1024 * 1024)  # Convert bytes to MB
+    total_mb = total / (1024 * 1024)
+    
+    # Calculate the upload speed (in bytes per second)
+    speed = done - user_data['previous_done']
+    elapsed_time = time.time() - user_data['previous_time']
+    
+    if elapsed_time > 0:
+        speed_bps = speed / elapsed_time  # Speed in bytes per second
+        speed_mbps = (speed_bps * 8) / (1024 * 1024)  # Speed in Mbps
+    else:
+        speed_mbps = 0
+    
+    # Estimated time remaining (in seconds)
+    if speed_bps > 0:
+        remaining_time = (total - done) / speed_bps
+    else:
+        remaining_time = 0
+    
+    # Convert remaining time to minutes
+    remaining_time_min = remaining_time / 60
+    
+    # Format the final output as needed
+    final = (
+        f"╭──────────────────╮\n"
+        f"│     **__Shimp Lib ⚡ Uploader__**       \n"
+        f"├──────────\n"
+        f"│ {progress_bar}\n\n"
+        f"│ **__Progress:__** {percent:.2f}%\n"
+        f"│ **__Done:__** {done_mb:.2f} MB / {total_mb:.2f} MB\n"
+        f"│ **__Speed:__** {speed_mbps:.2f} Mbps\n"
+        f"│ **__ETA:__** {remaining_time_min:.2f} min\n"
+        f"╰──────────────────╯\n\n"
+        f"**__Powered by Shimperd__**"
+    )
+    
+    # Update tracking variables for the user
+    user_data['previous_done'] = done
+    user_data['previous_time'] = time.time()
+    
+    return final
 
-        try:
-            await up_msg.edit(text)
-        except Exception:
-            pass
-            
-    except Exception as e:
-        print(f"Progress Bar Error: {str(e)}")
+
+def dl_progress_callback(done, total, user_id):
+    # Check if this user already has progress tracking
+    if user_id not in user_progress:
+        user_progress[user_id] = {
+            'previous_done': 0,
+            'previous_time': time.time()
+        }
+    
+    # Retrieve the user's tracking data
+    user_data = user_progress[user_id]
+    
+    # Calculate the percentage of progress
+    percent = (done / total) * 100
+    
+    # Format the progress bar
+    completed_blocks = int(percent // 10)
+    remaining_blocks = 10 - completed_blocks
+    progress_bar = "♦" * completed_blocks + "◇" * remaining_blocks
+    
+    # Convert done and total to MB for easier reading
+    done_mb = done / (1024 * 1024)  # Convert bytes to MB
+    total_mb = total / (1024 * 1024)
+    
+    # Calculate the upload speed (in bytes per second)
+    speed = done - user_data['previous_done']
+    elapsed_time = time.time() - user_data['previous_time']
+    
+    if elapsed_time > 0:
+        speed_bps = speed / elapsed_time  # Speed in bytes per second
+        speed_mbps = (speed_bps * 8) / (1024 * 1024)  # Speed in Mbps
+    else:
+        speed_mbps = 0
+    
+    # Estimated time remaining (in seconds)
+    if speed_bps > 0:
+        remaining_time = (total - done) / speed_bps
+    else:
+        remaining_time = 0
+    
+    # Convert remaining time to minutes
+    remaining_time_min = remaining_time / 60
+    
+    # Format the final output as needed
+    final = (
+        f"╭──────────────────╮\n"
+        f"│     **__Shimp Lib ⚡ Downloader__**       \n"
+        f"├──────────\n"
+        f"│ {progress_bar}\n\n"
+        f"│ **__Progress:__** {percent:.2f}%\n"
+        f"│ **__Done:__** {done_mb:.2f} MB / {total_mb:.2f} MB\n"
+        f"│ **__Speed:__** {speed_mbps:.2f} Mbps\n"
+        f"│ **__ETA:__** {remaining_time_min:.2f} min\n"
+        f"╰──────────────────╯\n\n"
+        f"**__Powered by Shimperd__**"
+    )
+    
+    # Update tracking variables for the user
+    user_data['previous_done'] = done
+    user_data['previous_time'] = time.time()
+    
+    return final
 
 # split function .... ?( to handle gareeb bot coder jo string n lga paaye)
 
@@ -1133,234 +1118,3 @@ async def split_and_upload_file(app, sender, target_chat_id, file_path, caption,
 
     await start.delete()
     os.remove(file_path)
-
-async def process_media(message_ids, target_chat, edit, topic_id=None):
-    """Process multiple media messages"""
-    try:
-        total = len(message_ids)
-        for i, msg_id in enumerate(message_ids, 1):
-            try:
-                await edit.edit(f"**Processing media {i}/{total}...**")
-                message = await app.get_messages(message.chat.id, msg_id)
-                
-                # Download media
-                file_path = await download_media(message, edit)
-                if not file_path:
-                    continue
-                
-                # Get caption
-                caption = get_caption(message)
-                
-                # Upload media
-                await upload_media(message.from_user.id, target_chat, file_path, caption, edit, topic_id)
-                
-                # Cleanup downloaded file
-                try:
-                    os.remove(file_path)
-                except:
-                    pass
-                    
-            except Exception as msg_error:
-                error_msg = f"Error processing message {msg_id}: {str(msg_error)}"
-                await app.send_message(message.from_user.id, error_msg)
-                await app.send_message(LOG_GROUP, error_msg)
-                continue
-                
-        await edit.edit("✅ Batch processing completed!")
-        
-    except Exception as e:
-        error_msg = f"Batch Processing Error: {str(e)}"
-        await app.send_message(message.from_user.id, error_msg)
-        await app.send_message(LOG_GROUP, error_msg)
-
-async def batch_link(_, message):
-    """Process batch of links for downloading and uploading"""
-    try:
-        # Initialize status message
-        status = await message.reply_text("🔄 Processing batch request...")
-        
-        # Extract links
-        if not (message.reply_to_message and message.reply_to_message.text):
-            await status.edit("❌ Please reply to a message containing links")
-            return
-            
-        links = [link.strip() for link in message.reply_to_message.text.split('\n') if link.strip()]
-        if not links:
-            await status.edit("❌ No valid links found in the message")
-            return
-            
-        # Process each link
-        total_links = len(links)
-        processed = 0
-        failed = 0
-        
-        for i, link in enumerate(links, 1):
-            try:
-                status_text = f"""🔄 Processing link {i}/{total_links}
-✓ Completed: {processed}
-❌ Failed: {failed}
-⏳ Current: Getting message..."""
-                await status.edit(status_text)
-                
-                # Get message from link
-                msg = await get_msg(app2, message.from_user.id, status.id, link, i, message)
-                if not msg:
-                    failed += 1
-                    continue
-                
-                # Update status for download
-                await status.edit(status_text.replace("Getting message...", "Downloading..."))
-                
-                # Download media
-                file_path = await download_media(msg, status)
-                if not file_path:
-                    failed += 1
-                    continue
-                
-                # Update status for upload
-                await status.edit(status_text.replace("Downloading...", "Uploading..."))
-                
-                # Get caption and upload
-                caption = get_caption(msg)
-                await upload_media(message.from_user.id, message.chat.id, file_path, caption, status, None)
-                processed += 1
-                
-                # Cleanup downloaded file
-                try:
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                except Exception as cleanup_error:
-                    print(f"Cleanup error for {file_path}: {str(cleanup_error)}")
-                
-                # Small delay between files to prevent flood
-                await asyncio.sleep(2)
-                
-            except Exception as e:
-                failed += 1
-                error_msg = f"Error processing link {i}: {str(e)}"
-                await app.send_message(message.from_user.id, error_msg)
-                await app.send_message(LOG_GROUP, error_msg)
-                continue
-        
-        # Final status
-        completion_msg = f"""✅ Batch processing completed!
-✓ Successfully processed: {processed}/{total_links}
-❌ Failed: {failed}
-
-Note: Check above messages for any specific errors."""
-        await status.edit(completion_msg)
-        
-    except Exception as e:
-        error_msg = f"Batch Processing Error: {str(e)}"
-        await message.reply_text(f"❌ {error_msg}")
-        await app.send_message(LOG_GROUP, error_msg)
-
-def humanbytes(size):
-    """Convert bytes to human readable format"""
-    if not size:
-        return "0 B"
-    power = 2 ** 10
-    n = 0
-    power_labels = {0: '', 1: 'K', 2: 'M', 3: 'G', 4: 'T'}
-    while size > power:
-        size /= power
-        n += 1
-    return f"{round(size, 2)} {power_labels[n]}B"
-
-def TimeFormatter(seconds: int) -> str:
-    """Format seconds into human readable time"""
-    minutes, seconds = divmod(seconds, 60)
-    hours, minutes = divmod(minutes, 60)
-    days, hours = divmod(hours, 24)
-    
-    time_parts = []
-    if days > 0:
-        time_parts.append(f"{days}d")
-    if hours > 0:
-        time_parts.append(f"{hours}h")
-    if minutes > 0:
-        time_parts.append(f"{minutes}m")
-    if seconds > 0:
-        time_parts.append(f"{seconds}s")
-        
-    return " ".join(time_parts) if time_parts else "0s"
-
-def thumbnail(sender):
-    """Get thumbnail path for a user"""
-    thumb_path = f'thumb/{sender}.jpg'
-    return thumb_path if os.path.exists(thumb_path) else None
-
-async def get_custom_thumbnail(sender):
-    """Get custom thumbnail for the user, with fallback to auto-generated thumbnail"""
-    thumb_path = thumbnail(sender)
-    if thumb_path:
-        # Create a copy of thumbnail for each upload to prevent deletion issues
-        new_thumb_path = f"{thumb_path}_{os.path.basename(thumb_path)}"
-        shutil.copy2(thumb_path, new_thumb_path)
-        thumb_path = new_thumb_path
-    return thumb_path
-
-def get_file_name(message):
-    """Get appropriate file name from message"""
-    try:
-        if message.document:
-            return message.document.file_name
-        if message.video:
-            return message.video.file_name if message.video.file_name else f"video_{int(time.time())}.mp4"
-        if message.audio:
-            return message.audio.file_name or f"audio_{int(time.time())}.mp3"
-        if message.voice:
-            return f"voice_{int(time.time())}.ogg"
-        if message.photo:
-            return f"photo_{int(time.time())}.jpg"
-        if message.animation:
-            return message.animation.file_name or f"animation_{int(time.time())}.mp4"
-        if message.sticker:
-            return f"sticker_{int(time.time())}.webp"
-        if message.video_note:
-            return f"video_note_{int(time.time())}.mp4"
-        return f"file_{int(time.time())}"
-    except Exception:
-        return f"file_{int(time.time())}"
-
-async def download_media(message, edit):
-    """Download media with progress tracking and error handling"""
-    try:
-        if not message or not hasattr(message, 'media'):
-            await edit.edit("❌ No media found in message")
-            return None
-
-        start_time = time.time()
-        file_name = get_file_name(message)
-        
-        # Create downloads directory if it doesn't exist
-        os.makedirs('downloads', exist_ok=True)
-        file_path = os.path.join('downloads', file_name)
-        
-        # Show download progress
-        progress_text = await edit.edit("⬇️ **Downloading media...**")
-        
-        try:
-            downloaded_file = await message.download(
-                file_name=file_path,
-                progress=progress_bar,
-                progress_args=(progress_text, start_time)
-            )
-            
-            if not downloaded_file or not os.path.exists(downloaded_file):
-                await edit.edit("❌ Download failed")
-                return None
-                
-            return downloaded_file
-            
-        except Exception as download_error:
-            error_msg = f"Download Error: {str(download_error)}"
-            await edit.edit(f"❌ {error_msg}")
-            await app.send_message(LOG_GROUP, error_msg)
-            return None
-            
-    except Exception as e:
-        error_msg = f"Media Download Error: {str(e)}"
-        await edit.edit(f"❌ {error_msg}")
-        await app.send_message(LOG_GROUP, error_msg)
-        return None
