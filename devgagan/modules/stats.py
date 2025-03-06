@@ -16,77 +16,78 @@
 
 import time
 import sys
-import motor
 from devgagan import app
 from pyrogram import filters
 from devgagan.core.mongo.db import users, premium_users, watermark_users
 from config import OWNER_ID
 from devgagan.core.mongo.users_db import get_users, add_user, get_user
-from devgagan.core.mongo.plans_db import premium_users
-
-
 
 start_time = time.time()
 
 @app.on_message(group=10)
 async def chat_watcher_func(_, message):
+    """Watch chat messages and add new users to database."""
     try:
         if message.from_user:
-            us_in_db = await get_user(message.from_user.id)
+            user_id = message.from_user.id
+            username = message.from_user.username
+            
+            us_in_db = await get_user(user_id)
             if not us_in_db:
-                await add_user(message.from_user.id)
-    except:
-        pass
+                await add_user(user_id, username)
+    except Exception as e:
+        print(f"Error in chat watcher: {e}")
 
-
-
-def time_formatter():
-    minutes, seconds = divmod(int(time.time() - start_time), 60)
+def time_formatter(seconds: float) -> str:
+    """Format time duration into weeks, days, hours, minutes, seconds."""
+    minutes, seconds = divmod(int(seconds), 60)
     hours, minutes = divmod(minutes, 60)
     days, hours = divmod(hours, 24)
     weeks, days = divmod(days, 7)
-    tmp = (
-        ((str(weeks) + "w:") if weeks else "")
-        + ((str(days) + "d:") if days else "")
-        + ((str(hours) + "h:") if hours else "")
-        + ((str(minutes) + "m:") if minutes else "")
-        + ((str(seconds) + "s") if seconds else "")
-    )
-    if tmp != "":
-        if tmp.endswith(":"):
-            return tmp[:-1]
-        else:
-            return tmp
-    else:
-        return "0 s"
-
+    
+    parts = []
+    if weeks > 0:
+        parts.append(f"{weeks}w")
+    if days > 0:
+        parts.append(f"{days}d")
+    if hours > 0:
+        parts.append(f"{hours}h")
+    if minutes > 0:
+        parts.append(f"{minutes}m")
+    if seconds > 0:
+        parts.append(f"{seconds}s")
+        
+    return ":".join(parts) if parts else "0s"
 
 @app.on_message(filters.command("stats"))
-async def stats_handler(client, message):
-    """Handle the /stats command to show bot statistics."""
+async def stats_handler(_, message):
+    """Handle the /stats command."""
     try:
-        user_id = message.from_user.id
-        
         # Only owner can view stats
-        if user_id != OWNER_ID:
+        if message.from_user.id != OWNER_ID:
             await message.reply("⚠️ Only the bot owner can view statistics.")
             return
             
-        # Get counts from each collection
-        total_users = await users.count_documents({})
+        # Get counts
+        total_users = len(await get_users())
         premium_count = await premium_users.count_documents({})
         watermark_count = await watermark_users.count_documents({})
         
-        # Format statistics message
-        stats_text = (
-            "📊 **Bot Statistics**\n\n"
-            f"👥 Total Users: `{total_users}`\n"
-            f"💎 Premium Users: `{premium_count}`\n"
-            f"🖼 Watermark Users: `{watermark_count}`\n"
-        )
+        # Calculate uptime
+        uptime = time_formatter(time.time() - start_time)
         
-        await message.reply(stats_text)
+        # Format stats message
+        stats = f"""
+📊 **Bot Statistics**
+
+👥 Total Users: `{total_users}`
+⭐️ Premium Users: `{premium_count}`
+🖼 Watermark Users: `{watermark_count}`
+⚡️ Python Version: `{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}`
+⏰ Uptime: `{uptime}`
+"""
+        await message.reply(stats)
         
     except Exception as e:
         print(f"Error in stats handler: {e}")
-        await message.reply("❌ Failed to fetch statistics. Please try again later.")
+        await message.reply("❌ An error occurred while fetching statistics.")
