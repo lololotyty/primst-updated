@@ -12,124 +12,89 @@
 # License: MIT License
 # ---------------------------------------------------
 
+import asyncio
 from pyrogram import filters
-from devgagan import app
-from devgagan.core.mongo.db import users, broadcast_list
 from config import OWNER_ID
-from datetime import datetime
+from devgagan import app
+from devgagan.core.mongo.users_db import get_users
 
-@app.on_message(filters.command("broadcast") & filters.user(OWNER_ID))
-async def broadcast_handler(client, message):
-    """Handle broadcasting messages to all users."""
+async def send_msg(user_id, message):
     try:
-        # Check if there's a message to broadcast
-        if not message.reply_to_message:
-            await message.reply(
-                "❌ Please reply to a message to broadcast it.\n\n"
-                "Usage: Reply to any message with `/broadcast`"
-            )
-            return
-            
-        # Get all users
-        all_users = await users.find().to_list(length=None)
-        broadcast_msg = message.reply_to_message
-        
-        if not all_users:
-            await message.reply("❌ No users found in database.")
-            return
-            
-        # Initialize counters
-        success = 0
-        failed = 0
-        
-        # Send status message
-        status_msg = await message.reply("🚀 Broadcasting message...")
-        
-        # Broadcast to each user
-        for user in all_users:
-            try:
-                user_id = user.get('_id')
-                if not user_id:
-                    continue
-                    
-                await broadcast_msg.copy(user_id)
-                success += 1
-                
-                # Log broadcast
-                await broadcast_list.insert_one({
-                    'user_id': user_id,
-                    'message_id': broadcast_msg.id,
-                    'timestamp': datetime.utcnow(),
-                    'status': 'success'
-                })
-                
-            except Exception as e:
-                print(f"Failed to broadcast to {user_id}: {e}")
-                failed += 1
-                
-                # Log failed broadcast
-                await broadcast_list.insert_one({
-                    'user_id': user_id,
-                    'message_id': broadcast_msg.id,
-                    'timestamp': datetime.utcnow(),
-                    'status': 'failed',
-                    'error': str(e)
-                })
-                
-            # Update status every 20 users
-            if (success + failed) % 20 == 0:
-                try:
-                    await status_msg.edit(
-                        f"🚀 Broadcasting message...\n\n"
-                        f"✅ Success: {success}\n"
-                        f"❌ Failed: {failed}\n"
-                        f"⏳ Progress: {((success + failed) / len(all_users)) * 100:.1f}%"
-                    )
-                except:
-                    pass
-                    
-        # Send final status
-        await status_msg.edit(
-            f"✅ Broadcast completed!\n\n"
-            f"📊 Statistics:\n"
-            f"👥 Total Users: {len(all_users)}\n"
-            f"✅ Success: {success}\n"
-            f"❌ Failed: {failed}"
+        x = await message.copy(chat_id=user_id)
+        try:
+            await x.pin()
+        except Exception:
+            await x.pin(both_sides=True)
+    except FloodWait as e:
+        await asyncio.sleep(e.x)
+        return send_msg(user_id, message)
+    except InputUserDeactivated:
+        return 400, f"{user_id} : deactivated\n"
+    except UserIsBlocked:
+        return 400, f"{user_id} : blocked the bot\n"
+    except PeerIdInvalid:
+        return 400, f"{user_id} : user id invalid\n"
+    except Exception:
+        return 500, f"{user_id} : {traceback.format_exc()}\n"
+
+
+@app.on_message(filters.command("gcast") & filters.user(OWNER_ID))
+async def broadcast(_, message):
+    if not message.reply_to_message:
+        await message.reply_text("ʀᴇᴘʟʏ ᴛᴏ ᴀ ᴍᴇssᴀɢᴇ ᴛᴏ ʙʀᴏᴀᴅᴄᴀsᴛ ɪᴛ.")
+        return    
+    exmsg = await message.reply_text("sᴛᴀʀᴛᴇᴅ ʙʀᴏᴀᴅᴄᴀsᴛɪɴɢ!")
+    all_users = (await get_users()) or {}
+    done_users = 0
+    failed_users = 0
+    
+    for user in all_users:
+        try:
+            await send_msg(user, message.reply_to_message)
+            done_users += 1
+            await asyncio.sleep(0.1)
+        except Exception:
+            pass
+            failed_users += 1
+    if failed_users == 0:
+        await exmsg.edit_text(
+            f"**sᴜᴄᴄᴇssғᴜʟʟʏ ʙʀᴏᴀᴅᴄᴀsᴛɪɴɢ ✅**\n\n**sᴇɴᴛ ᴍᴇssᴀɢᴇ ᴛᴏ** `{done_users}` **ᴜsᴇʀs**",
         )
-        
-    except Exception as e:
-        print(f"Error in broadcast handler: {e}")
-        await message.reply("❌ An error occurred while broadcasting.")
+    else:
+        await exmsg.edit_text(
+            f"**sᴜᴄᴄᴇssғᴜʟʟʏ ʙʀᴏᴀᴅᴄᴀsᴛɪɴɢ ✅**\n\n**sᴇɴᴛ ᴍᴇssᴀɢᴇ ᴛᴏ** `{done_users}` **ᴜsᴇʀs**\n\n**ɴᴏᴛᴇ:-** `ᴅᴜᴇ ᴛᴏ sᴏᴍᴇ ɪssᴜᴇ ᴄᴀɴ'ᴛ ᴀʙʟᴇ ᴛᴏ ʙʀᴏᴀᴅᴄᴀsᴛ` `{failed_users}` **ᴜsᴇʀs**",
+        )
 
-@app.on_message(filters.command("broadcaststats") & filters.user(OWNER_ID))
-async def broadcast_stats_handler(client, message):
-    """Show statistics about past broadcasts."""
-    try:
-        # Get total broadcasts
-        total_broadcasts = await broadcast_list.count_documents({})
-        success_count = await broadcast_list.count_documents({'status': 'success'})
-        failed_count = await broadcast_list.count_documents({'status': 'failed'})
-        
-        # Get recent broadcasts
-        recent = await broadcast_list.find().sort('timestamp', -1).limit(5).to_list(length=None)
-        
-        # Format stats message
-        stats = f"""
-📊 **Broadcast Statistics**
 
-📨 Total Broadcasts: `{total_broadcasts}`
-✅ Successful: `{success_count}`
-❌ Failed: `{failed_count}`
 
-🕒 Recent Broadcasts:
-"""
-        
-        for item in recent:
-            status = "✅" if item['status'] == 'success' else "❌"
-            stats += f"{status} User `{item['user_id']}` - {item['timestamp'].strftime('%Y-%m-%d %H:%M UTC')}\n"
-            
-        await message.reply(stats)
-        
-    except Exception as e:
-        print(f"Error in broadcast stats handler: {e}")
-        await message.reply("❌ An error occurred while fetching broadcast statistics.")
+
+
+@app.on_message(filters.command("acast") & filters.user(OWNER_ID))
+async def announced(_, message):
+    if message.reply_to_message:
+      to_send=message.reply_to_message.id
+    if not message.reply_to_message:
+      return await message.reply_text("Reply To Some Post To Broadcast")
+    users = await get_users() or []
+    print(users)
+    failed_user = 0
+  
+    for user in users:
+      try:
+        await _.forward_messages(chat_id=int(user), from_chat_id=message.chat.id, message_ids=to_send)
+        await asyncio.sleep(1)
+      except Exception as e:
+        failed_user += 1
+          
+    if failed_users == 0:
+        await exmsg.edit_text(
+            f"**sᴜᴄᴄᴇssғᴜʟʟʏ ʙʀᴏᴀᴅᴄᴀsᴛɪɴɢ ✅**\n\n**sᴇɴᴛ ᴍᴇssᴀɢᴇ ᴛᴏ** `{done_users}` **ᴜsᴇʀs**",
+        )
+    else:
+        await exmsg.edit_text(
+            f"**sᴜᴄᴄᴇssғᴜʟʟʏ ʙʀᴏᴀᴅᴄᴀsᴛɪɴɢ ✅**\n\n**sᴇɴᴛ ᴍᴇssᴀɢᴇ ᴛᴏ** `{done_users}` **ᴜsᴇʀs**\n\n**ɴᴏᴛᴇ:-** `ᴅᴜᴇ ᴛᴏ sᴏᴍᴇ ɪssᴜᴇ ᴄᴀɴ'ᴛ ᴀʙʟᴇ ᴛᴏ ʙʀᴏᴀᴅᴄᴀsᴛ` `{failed_users}` **ᴜsᴇʀs**",
+        )
+
+
+
+
