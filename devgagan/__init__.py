@@ -30,48 +30,52 @@ logging.basicConfig(
 
 botStartTime = time.time()
 
+# Initialize Pyrogram client with proper parse mode and command prefixes
 app = Client(
     ":RestrictBot:",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
     workers=50,
-    parse_mode=ParseMode.MARKDOWN
+    parse_mode=ParseMode.MARKDOWN,
+    command_handler_prefix=["/", "!", "."]  # Allow multiple command prefixes
 )
 
 pro = Client("ggbot", api_id=API_ID, api_hash=API_HASH, session_string=STRING)
 
 sex = TelegramClient('sexrepo', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
-
 # MongoDB setup
 tclient = AsyncIOMotorClient(MONGO_DB)
-tdb = tclient["telegram_bot"]  # Your database
-token = tdb["tokens"]  # Your tokens collection
+tdb = tclient["telegram_bot"]
+token = tdb["tokens"]
 
-async def create_ttl_index():
-    """Ensure the TTL index exists for the `tokens` collection."""
-    await token.create_index("expires_at", expireAfterSeconds=0)
-
-# Run the TTL index creation when the bot starts
 async def setup_database():
-    await create_ttl_index()
-    print("MongoDB TTL index created.")
-
-# You can call this in your main bot file before starting the bot
+    """Initialize database indexes and collections."""
+    try:
+        # Create TTL index for tokens
+        await token.create_index("created_at", expireAfterSeconds=86400)  # 24 hours
+        logging.info("Database setup completed successfully")
+    except Exception as e:
+        logging.error(f"Error setting up database: {e}")
 
 async def restrict_bot():
-    global BOT_ID, BOT_NAME, BOT_USERNAME
-    await setup_database()
-    await app.start()
-    getme = await app.get_me()
-    BOT_ID = getme.id
-    BOT_USERNAME = getme.username
-    if getme.last_name:
-        BOT_NAME = getme.first_name + " " + getme.last_name
-    else:
-        BOT_NAME = getme.first_name
-    if STRING:
-        await pro.start()
+    """Initialize bot and start accepting commands."""
+    try:
+        await app.start()
+        logging.info("Bot started successfully!")
+        
+        # Get bot info
+        me = await app.get_me()
+        logging.info(f"Bot Username: @{me.username}")
+        logging.info(f"Bot Name: {me.first_name}")
+        
+        # Initialize database
+        await setup_database()
+        
+    except Exception as e:
+        logging.error(f"Error starting bot: {e}")
+        raise
 
+# Initialize bot
 loop.run_until_complete(restrict_bot())
