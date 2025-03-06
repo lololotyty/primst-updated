@@ -21,73 +21,57 @@ from telethon.sync import TelegramClient
 from motor.motor_asyncio import AsyncIOMotorClient
 import time
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
 loop = asyncio.get_event_loop()
+
+logging.basicConfig(
+    format="[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s",
+    level=logging.INFO,
+)
 
 botStartTime = time.time()
 
-# Initialize Pyrogram client with proper configuration
 app = Client(
-    name="PrimstSaverBot",  # Unique session name
+    ":RestrictBot:",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
     workers=50,
-    parse_mode=ParseMode.MARKDOWN,
-    in_memory=True,  # Store session in memory
-    plugins=dict(root="devgagan/modules")  # Load plugins from modules directory
+    parse_mode=ParseMode.MARKDOWN
 )
 
-# Initialize user client for additional features
-pro = Client(
-    name="UserClient",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    session_string=STRING,
-    in_memory=True
-)
+pro = Client("ggbot", api_id=API_ID, api_hash=API_HASH, session_string=STRING)
 
-# Initialize Telethon client for specific features
 sex = TelegramClient('sexrepo', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+
 
 # MongoDB setup
 tclient = AsyncIOMotorClient(MONGO_DB)
-tdb = tclient["telegram_bot"]
-token = tdb["tokens"]
+tdb = tclient["telegram_bot"]  # Your database
+token = tdb["tokens"]  # Your tokens collection
 
+async def create_ttl_index():
+    """Ensure the TTL index exists for the `tokens` collection."""
+    await token.create_index("expires_at", expireAfterSeconds=0)
+
+# Run the TTL index creation when the bot starts
 async def setup_database():
-    """Initialize database indexes and collections."""
-    try:
-        # Create TTL index for tokens
-        await token.create_index("created_at", expireAfterSeconds=86400)  # 24 hours
-        logger.info("Database setup completed successfully")
-    except Exception as e:
-        logger.error(f"Error setting up database: {e}")
+    await create_ttl_index()
+    print("MongoDB TTL index created.")
+
+# You can call this in your main bot file before starting the bot
 
 async def restrict_bot():
-    """Initialize bot and start accepting commands."""
-    try:
-        # Start the bot
-        await app.start()
-        logger.info("Bot started successfully!")
-        
-        # Get bot info
-        me = await app.get_me()
-        logger.info(f"Bot Username: @{me.username}")
-        logger.info(f"Bot Name: {me.first_name}")
-        
-        # Initialize database
-        await setup_database()
-        
-    except Exception as e:
-        logger.error(f"Error starting bot: {e}")
-        raise
+    global BOT_ID, BOT_NAME, BOT_USERNAME
+    await setup_database()
+    await app.start()
+    getme = await app.get_me()
+    BOT_ID = getme.id
+    BOT_USERNAME = getme.username
+    if getme.last_name:
+        BOT_NAME = getme.first_name + " " + getme.last_name
+    else:
+        BOT_NAME = getme.first_name
+    if STRING:
+        await pro.start()
 
-# Initialize bot
 loop.run_until_complete(restrict_bot())
