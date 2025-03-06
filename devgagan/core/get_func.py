@@ -35,6 +35,7 @@ from config import MONGO_DB as MONGODB_CONNECTION_STRING, LOG_GROUP, OWNER_ID, S
 from devgagan.core.mongo import db as odb
 from telethon import TelegramClient, events, Button
 from devgagantools import fast_upload
+import shutil
 
 # MongoDB database name and collection name
 DB_NAME = "smart_users"
@@ -48,8 +49,11 @@ async def get_custom_thumbnail(sender):
     """Get custom thumbnail for the user, with fallback to auto-generated thumbnail"""
     thumb_path = thumbnail(sender)
     if thumb_path:
-        return thumb_path
-    return None
+        # Create a copy of thumbnail for each upload to prevent deletion issues
+        new_thumb_path = f"{thumb_path}_{os.path.basename(thumb_path)}"
+        shutil.copy2(thumb_path, new_thumb_path)
+        thumb_path = new_thumb_path
+    return thumb_path
 
 VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'flv', 'wmv', 'webm', 'mpg', 'mpeg', '3gp', 'ts', 'm4v', 'f4v', 'vob']
 DOCUMENT_EXTENSIONS = ['pdf', 'docs']
@@ -87,99 +91,97 @@ async def format_caption_to_html(caption: str) -> str:
 
 async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
     try:
-        upload_method = await fetch_upload_method(sender)  # Fetch the upload method (Pyrogram or Telethon)
+        upload_method = await fetch_upload_method(sender)
         metadata = video_metadata(file)
         width, height, duration = metadata['width'], metadata['height'], metadata['duration']
         
-        # Get custom thumbnail or generate from video
+        # Get custom thumbnail and ensure it exists for each upload
         thumb_path = await get_custom_thumbnail(sender)
-        if not thumb_path and file.split('.')[-1].lower() in {'mp4', 'mkv', 'avi', 'mov'}:
+        if thumb_path:
+            # Create a copy of thumbnail for each upload to prevent deletion issues
+            new_thumb_path = f"{thumb_path}_{os.path.basename(file)}"
+            shutil.copy2(thumb_path, new_thumb_path)
+            thumb_path = new_thumb_path
+        elif file.split('.')[-1].lower() in {'mp4', 'mkv', 'avi', 'mov'}:
             thumb_path = await screenshot(file, duration, sender)
+
+        # Apply watermark if set
+        watermark_text = await get_user_watermark(sender)
+        if watermark_text:
+            file = await apply_watermark(file, watermark_text, sender)
 
         video_formats = {'mp4', 'mkv', 'avi', 'mov'}
         document_formats = {'pdf', 'docx', 'txt', 'epub'}
         image_formats = {'jpg', 'png', 'jpeg'}
-
-        # Pyrogram upload
-        if upload_method == "Pyrogram":
-            if file.split('.')[-1].lower() in video_formats:
-                dm = await app.send_video(
-                    chat_id=target_chat_id,
-                    video=file,
-                    caption=caption,
-                    height=height,
-                    width=width,
-                    duration=duration,
-                    thumb=thumb_path,
-                    reply_to_message_id=topic_id,
-                    parse_mode=ParseMode.MARKDOWN,
-                    progress=progress_bar,
-                    progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
-                )
-                await dm.copy(LOG_GROUP)
-                
-            elif file.split('.')[-1].lower() in image_formats:
-                dm = await app.send_photo(
-                    chat_id=target_chat_id,
-                    photo=file,
-                    caption=caption,
-                    parse_mode=ParseMode.MARKDOWN,
-                    progress=progress_bar,
-                    reply_to_message_id=topic_id,
-                    progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
-                )
-                await dm.copy(LOG_GROUP)
+        
+        file_ext = file.split('.')[-1].lower()
+        
+        try:
+            if upload_method == "Pyrogram":
+                if file_ext in video_formats:
+                    dm = await app.send_video(
+                        target_chat_id,
+                        video=file,
+                        thumb=thumb_path,
+                        caption=caption,
+                        duration=duration,
+                        width=width,
+                        height=height,
+                        reply_to_message_id=topic_id,
+                        progress=progress_bar,
+                        progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
+                    )
+                elif file_ext in image_formats:
+                    dm = await app.send_photo(
+                        target_chat_id,
+                        photo=file,
+                        caption=caption,
+                        reply_to_message_id=topic_id,
+                        progress=progress_bar,
+                        progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
+                    )
+                else:
+                    dm = await app.send_document(
+                        target_chat_id,
+                        document=file,
+                        caption=caption,
+                        thumb=thumb_path,
+                        reply_to_message_id=topic_id,
+                        progress=progress_bar,
+                        progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
+                    )
             else:
-                dm = await app.send_document(
-                    chat_id=target_chat_id,
-                    document=file,
-                    caption=caption,
-                    thumb=thumb_path,  # Apply thumbnail to documents too
-                    reply_to_message_id=topic_id,
-                    progress=progress_bar,
-                    parse_mode=ParseMode.MARKDOWN,
-                    progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
-                )
-                await asyncio.sleep(2)
-                await dm.copy(LOG_GROUP)
-
-        # Telethon upload
-        elif upload_method == "Telethon":
-            await edit.delete()
-            progress_message = await gf.send_message(sender, "**__Uploading...__**")
-            caption = await format_caption_to_html(caption)
-            uploaded = await fast_upload(
-                gf, file,
-                reply=progress_message,
-                name=None,
-                progress_bar_function=lambda done, total: progress_callback(done, total, sender)
-            )
-            await progress_message.delete()
-
-            attributes = [
-                DocumentAttributeVideo(
-                    duration=duration,
-                    w=width,
-                    h=height,
-                    supports_streaming=True
-                )
-            ] if file.split('.')[-1].lower() in video_formats else []
-
-            await gf.send_file(
-                target_chat_id,
-                uploaded,
-                caption=caption,
-                attributes=attributes,
-                reply_to=topic_id,
-                thumb=thumb_path
-            )
-            await gf.send_file(
-                LOG_GROUP,
-                uploaded,
-                caption=caption,
-                attributes=attributes,
-                thumb=thumb_path
-            )
+                if file_ext in video_formats:
+                    await app2.send_file(
+                        target_chat_id,
+                        file=file,
+                        thumb=thumb_path,
+                        caption=caption,
+                        force_document=False,
+                        reply_to=topic_id,
+                        progress_callback=lambda d, t: asyncio.get_event_loop().create_task(
+                            progress(d, t, edit, start)
+                        )
+                    )
+                else:
+                    await app2.send_file(
+                        target_chat_id,
+                        file=file,
+                        thumb=thumb_path if file_ext not in image_formats else None,
+                        caption=caption,
+                        force_document=True,
+                        reply_to=topic_id,
+                        progress_callback=lambda d, t: asyncio.get_event_loop().create_task(
+                            progress(d, t, edit, start)
+                        )
+                    )
+        finally:
+            # Cleanup temporary thumbnail copy
+            if thumb_path and thumb_path.endswith(os.path.basename(file)):
+                try:
+                    os.remove(thumb_path)
+                except:
+                    pass
 
     except Exception as e:
         await app.send_message(LOG_GROUP, f"**Upload Failed:** {str(e)}")
@@ -310,7 +312,7 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         if file_size > size_limit and (free_check == 1 or pro is None):
             await edit.delete()
             await split_and_upload_file(app, sender, target_chat_id, file, caption, topic_id)
-            return
+            return       
         elif file_size > size_limit:
             await handle_large_file(file, sender, edit, caption)
         else:
@@ -655,9 +657,23 @@ async def callback_query_handler(event):
         await event.respond('Please send the photo you want to set as the thumbnail.')
     
     elif event.data == b'pdfwt':
-        await event.respond("Watermark is Pro+ Plan.. contact @shimps_bot")
+        # Check if user is premium
+        if await is_user_verified(user_id):
+            await event.respond("Send me the watermark text for PDF files:")
+            sessions[user_id] = 'pdfwatermark'
+        else:
+            await event.respond("PDF Watermark feature is only available for Premium users. Contact @shimps_bot to upgrade.")
         return
 
+    elif event.data == b'watermark':
+        # Check if user is premium
+        if await is_user_verified(user_id):
+            await event.respond("Send me the watermark text you want to apply to your videos/PDFs:")
+            sessions[user_id] = 'watermark'
+        else:
+            await event.respond("Watermark feature is only available for Premium users. Contact @shimps_bot to upgrade.")
+        return
+    
     elif event.data == b'uploadmethod':
         # Retrieve the user's current upload method (default to Pyrogram)
         user_data = collection.find_one({'user_id': user_id})
@@ -798,6 +814,16 @@ async def handle_user_input(event):
             await event.respond(f"Words added to delete list: {', '.join(words_to_delete)}")
                
             
+        elif session_type == 'watermark':
+            watermark_text = event.text
+            await set_watermark(user_id, watermark_text)
+            await event.respond(f"Video watermark text set to: {watermark_text}")
+            
+        elif session_type == 'pdfwatermark':
+            watermark_text = event.text
+            await set_watermark(user_id, watermark_text)
+            await event.respond(f"PDF watermark text set to: {watermark_text}")
+            
         del sessions[user_id]
     
 # Command to store channel IDs
@@ -905,6 +931,90 @@ async def handle_large_file(file, sender, edit, caption):
         os.remove(file)
         gc.collect()
         return
+
+async def apply_watermark(file_path, watermark_text, sender):
+    """Apply watermark to video or PDF files"""
+    try:
+        file_ext = file_path.split('.')[-1].lower()
+        
+        if file_ext in ['mp4', 'mkv', 'avi', 'mov']:
+            # Video watermark using ffmpeg
+            watermark_position = "5:5"  # Top-left corner
+            font_size = "24"
+            font_color = "white"
+            
+            cmd = [
+                'ffmpeg', '-i', file_path,
+                '-vf', f"drawtext=text='{watermark_text}':x={watermark_position.split(':')[0]}:y={watermark_position.split(':')[1]}:fontsize={font_size}:fontcolor={font_color}:box=1:boxcolor=black@0.5",
+                '-codec:a', 'copy',
+                f'{file_path}_watermarked.{file_ext}'
+            ]
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await process.communicate()
+            
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            return f'{file_path}_watermarked.{file_ext}'
+            
+        elif file_ext == 'pdf':
+            # PDF watermark using PyPDF2
+            from PyPDF2 import PdfFileWriter, PdfFileReader
+            from reportlab.pdfgen import canvas
+            from reportlab.lib.pagesizes import letter
+            
+            # Create watermark
+            c = canvas.Canvas('watermark.pdf', pagesize=letter)
+            c.setFont("Helvetica", 60)
+            c.setFillColorRGB(0.5, 0.5, 0.5)  # Gray color
+            c.saveState()
+            c.translate(300, 400)
+            c.rotate(45)
+            c.drawString(0, 0, watermark_text)
+            c.restoreState()
+            c.save()
+            
+            # Apply watermark to PDF
+            with open(file_path, 'rb') as file:
+                reader = PdfFileReader(file)
+                writer = PdfFileWriter()
+                
+                watermark = PdfFileReader('watermark.pdf')
+                for i in range(reader.getNumPages()):
+                    page = reader.getPage(i)
+                    page.mergePage(watermark.getPage(0))
+                    writer.addPage(page)
+                
+                with open(f'{file_path}_watermarked.{file_ext}', 'wb') as output_file:
+                    writer.write(output_file)
+            
+            # Cleanup
+            os.remove('watermark.pdf')
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            return f'{file_path}_watermarked.{file_ext}'
+            
+        return file_path
+    except Exception as e:
+        print(f"Error applying watermark: {e}")
+        return file_path
+
+async def get_user_watermark(user_id):
+    """Get user's watermark settings"""
+    user_data = collection.find_one({"user_id": user_id})
+    return user_data.get("watermark_text") if user_data else None
+
+async def set_watermark(user_id, watermark_text):
+    """Save user's watermark settings"""
+    collection.update_one(
+        {"user_id": user_id},
+        {"$set": {"watermark_text": watermark_text}},
+        upsert=True
+    )
 
 async def rename_file(file, sender):
     delete_words = load_delete_words(sender)
