@@ -12,77 +12,42 @@
 # License: MIT License
 # ---------------------------------------------------
 
-import datetime
-from motor.motor_asyncio import AsyncIOMotorClient as MongoCli
-from config import MONGO_DB
-from datetime import datetime, timedelta
+from datetime import datetime
 from devgagan.core.mongo.db import premium_users
-
-mongo = MongoCli(MONGO_DB)
-db = mongo.premium
-db = db.premium_db
-
-async def get_premium_users() -> list:
-    """Get all premium users."""
-    try:
-        user_list = await premium_users.find().to_list(length=None)
-        return [user['user_id'] for user in user_list]
-    except Exception as e:
-        print(f"Error getting premium users: {e}")
-        return []
-
-async def update_premium_users(user_id: int, expiry_date: datetime) -> bool:
-    """Update or add a premium user with expiry date."""
-    try:
-        result = await premium_users.update_one(
-            {'user_id': user_id},
-            {'$set': {
-                'user_id': user_id,
-                'expiry_date': expiry_date,
-                'added_on': datetime.utcnow()
-            }},
-            upsert=True
-        )
-        return True
-    except Exception as e:
-        print(f"Error updating premium user: {e}")
-        return False
-
-async def remove_premium_users(user_id: int) -> bool:
-    """Remove a premium user."""
-    try:
-        result = await premium_users.delete_one({'user_id': user_id})
-        return result.deleted_count > 0
-    except Exception as e:
-        print(f"Error removing premium user: {e}")
-        return False
 
 async def check_and_remove_expired_users():
     """Check and remove expired premium users."""
     try:
+        # Find all expired premium users
         current_time = datetime.utcnow()
-        # Find all expired users
         expired_users = await premium_users.find({
-            'expiry_date': {'$lt': current_time}
+            'expiry_date': {'$lte': current_time}
         }).to_list(length=None)
         
         # Remove expired users
         if expired_users:
-            await premium_users.delete_many({
-                'user_id': {'$in': [user['user_id'] for user in expired_users]}
-            })
-            print(f"Removed {len(expired_users)} expired premium users")
+            for user in expired_users:
+                await premium_users.delete_one({'user_id': user['user_id']})
+                
+        return expired_users
+        
     except Exception as e:
         print(f"Error checking expired users: {e}")
+        return []
 
-async def is_premium_user(user_id: int) -> bool:
-    """Check if a user is premium and not expired."""
+async def get_premium_users():
+    """Get all premium users."""
     try:
-        user = await premium_users.find_one({
-            'user_id': user_id,
-            'expiry_date': {'$gt': datetime.utcnow()}
-        })
-        return bool(user)
+        users = await premium_users.find().to_list(length=None)
+        return [user['user_id'] for user in users]
+    except Exception as e:
+        print(f"Error getting premium users: {e}")
+        return []
+
+async def check_premium(user_id: int):
+    """Check if a user has premium access."""
+    try:
+        return await premium_users.find_one({'user_id': user_id})
     except Exception as e:
         print(f"Error checking premium status: {e}")
-        return False
+        return None
