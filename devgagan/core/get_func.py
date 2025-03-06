@@ -36,6 +36,10 @@ from devgagan.core.mongo import db as odb
 from telethon import TelegramClient, events, Button
 from devgagantools import fast_upload
 
+# MongoDB database name and collection name
+DB_NAME = "smart_users"
+COLLECTION_NAME = "super_user"
+
 def thumbnail(sender):
     thumb_path = f'{sender}.jpg'
     return thumb_path if os.path.exists(thumb_path) else None
