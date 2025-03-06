@@ -30,15 +30,14 @@ logging.basicConfig(
 
 botStartTime = time.time()
 
-# Initialize Pyrogram client with proper parse mode and command prefixes
+# Initialize Pyrogram client
 app = Client(
     ":RestrictBot:",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
     workers=50,
-    parse_mode=ParseMode.MARKDOWN,
-    command_handler_prefix=["/", "!", "."]  # Allow multiple command prefixes
+    parse_mode=ParseMode.MARKDOWN
 )
 
 pro = Client("ggbot", api_id=API_ID, api_hash=API_HASH, session_string=STRING)
