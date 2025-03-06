@@ -20,6 +20,8 @@ mongo = MongoCli(MONGO_DB)
 db = mongo.users
 db = db.users_db
 
+# Collection for watermark permissions
+watermark_users = db['watermark_users']
 
 async def get_users():
   user_list = []
@@ -49,6 +51,34 @@ async def del_user(user):
     return
   else:
     await db.users.delete_one({"user": user})
-    
 
+async def add_watermark_user(user_id: int) -> bool:
+    """Add a user to watermark permissions."""
+    try:
+        result = await watermark_users.update_one(
+            {'user_id': user_id},
+            {'$set': {'user_id': user_id}},
+            upsert=True
+        )
+        return True
+    except Exception as e:
+        print(f"Error adding watermark user: {e}")
+        return False
 
+async def remove_watermark_user(user_id: int) -> bool:
+    """Remove a user from watermark permissions."""
+    try:
+        result = await watermark_users.delete_one({'user_id': user_id})
+        return result.deleted_count > 0
+    except Exception as e:
+        print(f"Error removing watermark user: {e}")
+        return False
+
+async def is_watermark_user(user_id: int) -> bool:
+    """Check if a user has watermark permissions."""
+    try:
+        user = await watermark_users.find_one({'user_id': user_id})
+        return bool(user)
+    except Exception as e:
+        print(f"Error checking watermark user: {e}")
+        return False
