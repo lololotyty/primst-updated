@@ -12,7 +12,7 @@ from pyrogram.enums import ParseMode, MessageMediaType
 from devgagan import app
 from devgagan import sex as gf
 from config import OWNER_ID, MONGO_DB as MONGODB_CONNECTION_STRING, LOG_GROUP, STRING, API_ID, API_HASH
-from devgagan.core.mongo.users_db import is_user_verified, get_users, add_user, remove_user, is_watermark_user
+from devgagan.core.mongo.users_db import is_verified_user, get_users, add_user, remove_user, is_watermark_user
 from devgagan.core.watermark import add_image_watermark, add_pdf_watermark
 from devgagan.modules.watermark import user_watermarks
 from devgagan.core.mongo.plans_db import get_premium_users, update_premium_users, remove_premium_users, premium_users
