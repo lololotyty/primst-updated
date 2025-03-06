@@ -22,32 +22,12 @@ import cv2
 from pyrogram.errors import FloodWait, InviteHashInvalid, InviteHashExpired, UserAlreadyParticipant, UserNotParticipant
 from datetime import datetime as dt
 import asyncio, subprocess, re, os, time
-from pyrogram import filters
-from devgagan import app
-from config import OWNER_ID
-from devgagan.core.mongo.db import premium_users
-
 async def chk_user(message, user_id):
-    """Check if a user is premium or owner."""
-    try:
-        if user_id == OWNER_ID:
-            return 0
-            
-        is_premium = await premium_users.find_one({
-            'user_id': user_id,
-            'expiry_date': {'$gt': datetime.utcnow()}
-        })
-        
-        return 1 if not is_premium else 0
-        
-    except Exception as e:
-        print(f"Error checking user status: {e}")
-        return 1  # Treat as non-premium on error
-
-async def subscribe(_, message):
-    """Legacy function kept for compatibility."""
-    return 0  # Always return success since we've moved to a different auth system
-
+    user = await premium_users()
+    if user_id in user or user_id in OWNER_ID:
+        return 0
+    else:
+        return 1
 async def gen_link(app,chat_id):
    link = await app.export_chat_invite_link(chat_id)
    return link
