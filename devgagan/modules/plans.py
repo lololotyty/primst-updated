@@ -12,159 +12,46 @@
 # License: MIT License
 # ---------------------------------------------------
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 import pytz
 import datetime, time
 from devgagan import app
 import asyncio
 from config import OWNER_ID
 from devgagan.core.func import get_seconds
-from devgagan.core.mongo.db import premium_users
+from devgagan.core.mongo import plans_db  
 from pyrogram import filters 
 
 
 
-@app.on_message(filters.command("addpremium") & filters.user(OWNER_ID))
-async def add_premium_handler(client, message):
-    """Handle adding premium users."""
-    try:
-        user_id = message.from_user.id
+@app.on_message(filters.command("rem") & filters.user(OWNER_ID))
+async def remove_premium(client, message):
+    if len(message.command) == 2:
+        user_id = int(message.command[1])  
+        user = await client.get_users(user_id)
+        data = await plans_db.check_premium(user_id)  
         
-        # Check command format
-        if len(message.command) != 3:
-            await message.reply(
-                "❌ Invalid format.\n\n"
-                "Usage: `/addpremium <user_id> <days>`\n"
-                "Example: `/addpremium 123456789 30`"
+        if data and data.get("_id"):
+            await plans_db.remove_premium(user_id)
+            await message.reply_text("ᴜꜱᴇʀ ʀᴇᴍᴏᴠᴇᴅ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ !")
+            await client.send_message(
+                chat_id=user_id,
+                text=f"<b>ʜᴇʏ {user.mention},\n\nʏᴏᴜʀ ᴘʀᴇᴍɪᴜᴍ ᴀᴄᴄᴇss ʜᴀs ʙᴇᴇɴ ʀᴇᴍᴏᴠᴇᴅ.\nᴛʜᴀɴᴋ ʏᴏᴜ ꜰᴏʀ ᴜsɪɴɢ ᴏᴜʀ sᴇʀᴠɪᴄᴇ 😊.</b>"
             )
-            return
-            
-        try:
-            target_user = int(message.command[1])
-            days = int(message.command[2])
-        except ValueError:
-            await message.reply("❌ User ID and days must be numbers.")
-            return
-            
-        # Calculate expiry date
-        expiry_date = datetime.utcnow() + timedelta(days=days)
-        
-        # Add premium user
-        try:
-            await premium_users.update_one(
-                {'user_id': target_user},
-                {'$set': {
-                    'user_id': target_user,
-                    'expiry_date': expiry_date,
-                    'added_on': datetime.utcnow(),
-                    'added_by': user_id
-                }},
-                upsert=True
-            )
-            
-            await message.reply(
-                f"✅ Successfully added premium user!\n\n"
-                f"👤 User ID: `{target_user}`\n"
-                f"📅 Duration: `{days} days`\n"
-                f"⏰ Expires: `{expiry_date.strftime('%Y-%m-%d %H:%M UTC')}`"
-            )
-            
-        except Exception as e:
-            print(f"Database error adding premium user: {e}")
-            await message.reply("❌ Failed to add premium user. Please try again later.")
-            
-    except Exception as e:
-        print(f"Error in add premium handler: {e}")
-        await message.reply("❌ An error occurred. Please try again later.")
+        else:
+            await message.reply_text("ᴜɴᴀʙʟᴇ ᴛᴏ ʀᴇᴍᴏᴠᴇ ᴜꜱᴇR !\nᴀʀᴇ ʏᴏᴜ ꜱᴜʀᴇ, ɪᴛ ᴡᴀꜱ ᴀ ᴘʀᴇᴍɪᴜᴍ ᴜꜱᴇʀ ɪᴅ ?")
+    else:
+        await message.reply_text("ᴜꜱᴀɢᴇ : /rem user_id") 
 
-
-@app.on_message(filters.command("delpremium") & filters.user(OWNER_ID))
-async def remove_premium_handler(client, message):
-    """Handle removing premium users."""
-    try:
-        user_id = message.from_user.id
-        
-        # Check command format
-        if len(message.command) != 2:
-            await message.reply(
-                "❌ Invalid format.\n\n"
-                "Usage: `/delpremium <user_id>`\n"
-                "Example: `/delpremium 123456789`"
-            )
-            return
-            
-        try:
-            target_user = int(message.command[1])
-        except ValueError:
-            await message.reply("❌ User ID must be a number.")
-            return
-            
-        # Remove premium user
-        try:
-            result = await premium_users.delete_one({'user_id': target_user})
-            
-            if result.deleted_count > 0:
-                await message.reply(f"✅ Successfully removed premium access for user `{target_user}`.")
-            else:
-                await message.reply(f"❌ User `{target_user}` is not a premium user.")
-                
-        except Exception as e:
-            print(f"Database error removing premium user: {e}")
-            await message.reply("❌ Failed to remove premium user. Please try again later.")
-            
-    except Exception as e:
-        print(f"Error in remove premium handler: {e}")
-        await message.reply("❌ An error occurred. Please try again later.")
-
-
-@app.on_message(filters.command("premiumlist") & filters.user(OWNER_ID))
-async def list_premium_handler(client, message):
-    """Handle listing premium users."""
-    try:
-        user_id = message.from_user.id
-            
-        # Get all premium users
-        try:
-            premium_list = await premium_users.find().to_list(length=None)
-            
-            if not premium_list:
-                await message.reply("📝 No premium users found.")
-                return
-                
-            # Format user list
-            current_time = datetime.utcnow()
-            user_text = "📋 **Premium Users List**\n\n"
-            
-            for user in premium_list:
-                expiry = user.get('expiry_date')
-                remaining = expiry - current_time if expiry else timedelta()
-                days_left = remaining.days
-                
-                user_text += (
-                    f"👤 User ID: `{user['user_id']}`\n"
-                    f"⏰ Expires: `{expiry.strftime('%Y-%m-%d %H:%M UTC')}`\n"
-                    f"📅 Days Left: `{days_left}`\n"
-                    "➖➖➖➖➖➖➖➖➖➖\n"
-                )
-                
-            await message.reply(user_text)
-            
-        except Exception as e:
-            print(f"Database error listing premium users: {e}")
-            await message.reply("❌ Failed to fetch premium users. Please try again later.")
-            
-    except Exception as e:
-        print(f"Error in list premium handler: {e}")
-        await message.reply("❌ An error occurred. Please try again later.")
 
 
 @app.on_message(filters.command("myplan"))
 async def myplan(client, message):
     user_id = message.from_user.id
     user = message.from_user.mention
-    data = await premium_users.find_one({'user_id': user_id})
-    if data and data.get("expiry_date"):
-        expiry = data.get("expiry_date")
+    data = await plans_db.check_premium(user_id)  
+    if data and data.get("expire_date"):
+        expiry = data.get("expire_date")
         expiry_ist = expiry.astimezone(pytz.timezone("Asia/Kolkata"))
         expiry_str_in_ist = expiry.astimezone(pytz.timezone("Asia/Kolkata")).strftime("%d-%m-%Y\n⏱️ ᴇxᴘɪʀʏ ᴛɪᴍᴇ : %I:%M:%S %p")            
         
@@ -189,9 +76,9 @@ async def get_premium(client, message):
     if len(message.command) == 2:
         user_id = int(message.command[1])
         user = await client.get_users(user_id)
-        data = await premium_users.find_one({'user_id': user_id})
-        if data and data.get("expiry_date"):
-            expiry = data.get("expiry_date") 
+        data = await plans_db.check_premium(user_id)  
+        if data and data.get("expire_date"):
+            expiry = data.get("expire_date") 
             expiry_ist = expiry.astimezone(pytz.timezone("Asia/Kolkata"))
             expiry_str_in_ist = expiry.astimezone(pytz.timezone("Asia/Kolkata")).strftime("%d-%m-%Y\n⏱️ ᴇxᴘɪʀʏ ᴛɪᴍᴇ : %I:%M:%S %p")            
             
@@ -212,6 +99,33 @@ async def get_premium(client, message):
         await message.reply_text("ᴜꜱᴀɢᴇ : /check user_id")
 
 
+@app.on_message(filters.command("add") & filters.user(OWNER_ID))
+async def give_premium_cmd_handler(client, message):
+    if len(message.command) == 4:
+        time_zone = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
+        current_time = time_zone.strftime("%d-%m-%Y\n⏱️ ᴊᴏɪɴɪɴɢ ᴛɪᴍᴇ : %I:%M:%S %p") 
+        user_id = int(message.command[1])
+        user = await client.get_users(user_id)
+        time = message.command[2]+" "+message.command[3]
+        seconds = await get_seconds(time)
+        if seconds > 0:
+            expiry_time = datetime.datetime.now() + datetime.timedelta(seconds=seconds)  
+            await plans_db.add_premium(user_id, expiry_time)  
+            data = await plans_db.check_premium(user_id)
+            expiry = data.get("expire_date")   
+            expiry_str_in_ist = expiry.astimezone(pytz.timezone("Asia/Kolkata")).strftime("%d-%m-%Y\n⏱️ ᴇxᴘɪʀʏ ᴛɪᴍᴇ : %I:%M:%S %p")         
+            await message.reply_text(f"ᴘʀᴇᴍɪᴜᴍ ᴀᴅᴅᴇᴅ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ ✅\n\n👤 ᴜꜱᴇʀ : {user.mention}\n⚡ ᴜꜱᴇʀ ɪᴅ : <code>{user_id}</code>\n⏰ ᴘʀᴇᴍɪᴜᴍ ᴀᴄᴄᴇꜱꜱ : <code>{time}</code>\n\n⏳ ᴊᴏɪɴɪɴɢ ᴅᴀᴛᴇ : {current_time}\n\n⌛️ ᴇxᴘɪʀʏ ᴅᴀᴛᴇ : {expiry_str_in_ist} \n\n__**Powered by Shimperd__**", disable_web_page_preview=True)
+            await client.send_message(
+                chat_id=user_id,
+                text=f"👋 ʜᴇʏ {user.mention},\nᴛʜᴀɴᴋ ʏᴏᴜ ꜰᴏʀ ᴘᴜʀᴄʜᴀꜱɪɴɢ ᴘʀᴇᴍɪᴜᴍ.\nᴇɴᴊᴏʏ !! ✨🎉\n\n⏰ ᴘʀᴇᴍɪᴜᴍ ᴀᴄᴄᴇꜱꜱ : <code>{time}</code>\n⏳ ᴊᴏɪɴɪɴɢ ᴅᴀᴛᴇ : {current_time}\n\n⌛️ ᴇxᴘɪʀʏ ᴅᴀᴛᴇ : {expiry_str_in_ist}", disable_web_page_preview=True              
+            )
+                    
+        else:
+            await message.reply_text("Invalid time format. Please use '1 day for days', '1 hour for hours', or '1 min for minutes', or '1 month for months' or '1 year for year'")
+    else:
+        await message.reply_text("Usage : /add user_id time (e.g., '1 day for days', '1 hour for hours', or '1 min for minutes', or '1 month for months' or '1 year for year')")
+
+
 @app.on_message(filters.command("transfer"))
 async def transfer_premium(client, message):
     if len(message.command) == 2:
@@ -221,25 +135,16 @@ async def transfer_premium(client, message):
         new_user = await client.get_users(new_user_id)
         
         # Fetch sender's premium plan details
-        data = await premium_users.find_one({'user_id': sender_user_id})
+        data = await plans_db.check_premium(sender_user_id)
         
         if data and data.get("_id"):  # Verify sender is already a premium user
-            expiry = data.get("expiry_date")  
+            expiry = data.get("expire_date")  
             
             # Remove premium for the sender
-            await premium_users.delete_one({'user_id': sender_user_id})
+            await plans_db.remove_premium(sender_user_id)
             
             # Add premium for the new user with the same expiry date
-            await premium_users.update_one(
-                {'user_id': new_user_id},
-                {'$set': {
-                    'user_id': new_user_id,
-                    'expiry_date': expiry,
-                    'added_on': datetime.utcnow(),
-                    'added_by': sender_user_id
-                }},
-                upsert=True
-            )
+            await plans_db.add_premium(new_user_id, expiry)
             
             # Convert expiry date to IST format for display
             expiry_str_in_ist = expiry.astimezone(pytz.timezone("Asia/Kolkata")).strftime(
@@ -276,43 +181,46 @@ async def transfer_premium(client, message):
 
 
 async def premium_remover():
-    all_users = await premium_users.find().to_list(length=None)
+    all_users = await plans_db.premium_users()
     removed_users = []
     not_removed_users = []
 
-    for user in all_users:
+    for user_id in all_users:
         try:
-            user_id = user['user_id']
-            chk_time = user.get('expiry_date')
+            user = await app.get_users(user_id)
+            chk_time = await plans_db.check_premium(user_id)
 
-            if chk_time and chk_time <= datetime.utcnow():
-                name = await app.get_users(user_id)
-                await premium_users.delete_one({'user_id': user_id})
-                await app.send_message(user_id, text=f"Hello {name.first_name}, your premium subscription has expired.")
-                print(f"{name.first_name}, your premium subscription has expired.")
-                removed_users.append(f"{name.first_name} ({user_id})")
-            else:
-                name = await app.get_users(user_id)
-                current_time = datetime.utcnow()
-                time_left = chk_time - current_time
+            if chk_time and chk_time.get("expire_date"):
+                expiry_date = chk_time["expire_date"]
 
-                days = time_left.days
-                hours, remainder = divmod(time_left.seconds, 3600)
-                minutes, seconds = divmod(remainder, 60)
-
-                if days > 0:
-                    remaining_time = f"{days} days, {hours} hours, {minutes} minutes, {seconds} seconds"
-                elif hours > 0:
-                    remaining_time = f"{hours} hours, {minutes} minutes, {seconds} seconds"
-                elif minutes > 0:
-                    remaining_time = f"{minutes} minutes, {seconds} seconds"
+                if expiry_date <= datetime.datetime.now():
+                    name = user.first_name
+                    await plans_db.remove_premium(user_id)
+                    await app.send_message(user_id, text=f"Hello {name}, your premium subscription has expired.")
+                    print(f"{name}, your premium subscription has expired.")
+                    removed_users.append(f"{name} ({user_id})")
                 else:
-                    remaining_time = f"{seconds} seconds"
+                    name = user.first_name
+                    current_time = datetime.datetime.now()
+                    time_left = expiry_date - current_time
 
-                print(f"{name.first_name} : Remaining Time : {remaining_time}")
-                not_removed_users.append(f"{name.first_name} ({user_id})")
+                    days = time_left.days
+                    hours, remainder = divmod(time_left.seconds, 3600)
+                    minutes, seconds = divmod(remainder, 60)
+
+                    if days > 0:
+                        remaining_time = f"{days} days, {hours} hours, {minutes} minutes, {seconds} seconds"
+                    elif hours > 0:
+                        remaining_time = f"{hours} hours, {minutes} minutes, {seconds} seconds"
+                    elif minutes > 0:
+                        remaining_time = f"{minutes} minutes, {seconds} seconds"
+                    else:
+                        remaining_time = f"{seconds} seconds"
+
+                    print(f"{name} : Remaining Time : {remaining_time}")
+                    not_removed_users.append(f"{name} ({user_id})")
         except:
-            await premium_users.delete_one({'user_id': user_id})
+            await plans_db.remove_premium(user_id)
             print(f"Unknown users captured : {user_id} removed")
             removed_users.append(f"Unknown ({user_id})")
 
@@ -331,3 +239,4 @@ async def refresh_users(_, message):
         f"> **Not Removed Users:**\n{not_removed_text}"
     )
     await message.reply(summary)
+    
