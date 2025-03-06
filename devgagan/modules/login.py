@@ -12,28 +12,15 @@
 # License: MIT License
 # ---------------------------------------------------
 
-from pyrogram import filters, Client
+from pyrogram import filters
 from devgagan import app
-import random
-import os
+from devgagan.core.mongo.db import sessions, users
+from config import OWNER_ID
 import asyncio
-import string
-from devgagan.core.mongo import db
-from devgagan.core.func import subscribe, chk_user
-from config import API_ID as api_id, API_HASH as api_hash
-from pyrogram.errors import (
-    ApiIdInvalid,
-    PhoneNumberInvalid,
-    PhoneCodeInvalid,
-    PhoneCodeExpired,
-    SessionPasswordNeeded,
-    PasswordHashInvalid,
-    FloodWait
-)
 
 def generate_random_name(length=7):
     characters = string.ascii_letters + string.digits
-    return ''.join(random.choice(characters) for _ in range(length))  # Editted ... 
+    return ''.join(random.choice(characters) for _ in range(length))  
 
 async def delete_session_files(user_id):
     session_file = f"session_{user_id}.session"
@@ -54,78 +41,80 @@ async def delete_session_files(user_id):
         return True  # Files were deleted
     return False  # No files found
 
-@app.on_message(filters.command("logout"))
-async def clear_db(client, message):
-    user_id = message.chat.id
-    files_deleted = await delete_session_files(user_id)
-    try:
-        await db.remove_session(user_id)
-    except Exception:
-        pass
-
-    if files_deleted:
-        await message.reply("✅ Your session data and files have been cleared from memory and disk.")
-    else:
-        await message.reply("✅ Logged out with flag -m")
-        
-    
 @app.on_message(filters.command("login"))
-async def generate_session(_, message):
-    joined = await subscribe(_, message)
-    if joined == 1:
-        return
-        
-    # user_checked = await chk_user(message, message.from_user.id)
-    # if user_checked == 1:
-        # return
-        
-    user_id = message.chat.id   
-    
-    number = await _.ask(user_id, 'Please enter your phone number along with the country code. \nExample: +19876543210', filters=filters.text)   
-    phone_number = number.text
+async def login_handler(client, message):
+    """Handle user login and session management."""
     try:
-        await message.reply("📲 Sending OTP...")
-        client = Client(f"session_{user_id}", api_id, api_hash)
+        user_id = message.from_user.id
         
-        await client.connect()
+        # Only owner can use login command
+        if user_id != OWNER_ID:
+            await message.reply("⚠️ Only the bot owner can use this command.")
+            return
+            
+        # Check if session string is provided
+        if len(message.command) < 2:
+            await message.reply("❌ Please provide your session string.\n\nUsage: `/login <session_string>`")
+            return
+            
+        session_string = message.command[1]
+        
+        # Store session
+        try:
+            await sessions.update_one(
+                {"user_id": user_id},
+                {"$set": {
+                    "user_id": user_id,
+                    "session_string": session_string,
+                    "active": True
+                }},
+                upsert=True
+            )
+            
+            # Also ensure user exists in users collection
+            await users.update_one(
+                {"user_id": user_id},
+                {"$set": {"user_id": user_id}},
+                upsert=True
+            )
+            
+            await message.reply("✅ Login successful! Your session has been saved.")
+            
+        except Exception as e:
+            print(f"Database error during login: {e}")
+            await message.reply("❌ Failed to save session. Please try again later.")
+            
     except Exception as e:
-        await message.reply(f"❌ Failed to send OTP {e}. Please wait and try again later.")
+        print(f"Error in login handler: {e}")
+        await message.reply("❌ An error occurred. Please try again later.")
+
+@app.on_message(filters.command("logout"))
+async def logout_handler(client, message):
+    """Handle user logout."""
     try:
-        code = await client.send_code(phone_number)
-    except ApiIdInvalid:
-        await message.reply('❌ Invalid combination of API ID and API HASH. Please restart the session.')
-        return
-    except PhoneNumberInvalid:
-        await message.reply('❌ Invalid phone number. Please restart the session.')
-        return
-    try:
-        otp_code = await _.ask(user_id, "Please check for an OTP in your official Telegram account. Once received, enter the OTP in the following format: \nIf the OTP is `12345`, please enter it as `1 2 3 4 5`.", filters=filters.text, timeout=600)
-    except TimeoutError:
-        await message.reply('⏰ Time limit of 10 minutes exceeded. Please restart the session.')
-        return
-    phone_code = otp_code.text.replace(" ", "")
-    try:
-        await client.sign_in(phone_number, code.phone_code_hash, phone_code)
+        user_id = message.from_user.id
+        
+        # Only owner can use logout command
+        if user_id != OWNER_ID:
+            await message.reply("⚠️ Only the bot owner can use this command.")
+            return
+            
+        # Remove session
+        try:
+            result = await sessions.update_one(
+                {"user_id": user_id},
+                {"$set": {"active": False}}
+            )
+            
+            if result.modified_count > 0:
+                await message.reply("✅ Logout successful! Your session has been deactivated.")
+            else:
+                await message.reply("❌ No active session found.")
                 
-    except PhoneCodeInvalid:
-        await message.reply('❌ Invalid OTP. Please restart the session.')
-        return
-    except PhoneCodeExpired:
-        await message.reply('❌ Expired OTP. Please restart the session.')
-        return
-    except SessionPasswordNeeded:
-        try:
-            two_step_msg = await _.ask(user_id, 'Your account has two-step verification enabled. Please enter your password.', filters=filters.text, timeout=300)
-        except TimeoutError:
-            await message.reply('⏰ Time limit of 5 minutes exceeded. Please restart the session.')
-            return
-        try:
-            password = two_step_msg.text
-            await client.check_password(password=password)
-        except PasswordHashInvalid:
-            await two_step_msg.reply('❌ Invalid password. Please restart the session.')
-            return
-    string_session = await client.export_session_string()
-    await db.set_session(user_id, string_session)
-    await client.disconnect()
-    await otp_code.reply("✅ Login successful!")
+        except Exception as e:
+            print(f"Database error during logout: {e}")
+            await message.reply("❌ Failed to process logout. Please try again later.")
+            
+    except Exception as e:
+        print(f"Error in logout handler: {e}")
+        await message.reply("❌ An error occurred. Please try again later.")
