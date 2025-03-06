@@ -1,137 +1,208 @@
-import os
-import tempfile
-from PIL import Image, ImageDraw, ImageFont
-import math
-from PyPDF2 import PdfReader, PdfWriter
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
-import io
+import logging
+from pyrogram import filters
+from devgagan import app
+from devgagan.core.mongo.db import watermark_users
+from config import OWNER_ID
+from datetime import datetime
 
-def get_default_font():
-    try:
-        # Try system fonts first
-        system_fonts = [
-            "arial.ttf",
-            "Arial.ttf",
-            "DejaVuSans.ttf",
-            "calibri.ttf",
-            "Calibri.ttf"
-        ]
-        for font in system_fonts:
-            try:
-                return ImageFont.truetype(font, 36)
-            except:
-                continue
-        
-        # Fallback to default
-        return ImageFont.load_default()
-    except:
-        return ImageFont.load_default()
+# Configure logging
+logger = logging.getLogger(__name__)
 
-async def add_image_watermark(image_path, watermark_text):
+# Store user watermark text preferences in memory
+user_watermarks = {}
+
+async def is_watermark_user(user_id: int) -> bool:
+    """Check if a user has watermark permission."""
     try:
-        # Open the image
-        with Image.open(image_path) as img:
-            # Convert to RGBA to support transparency
-            img = img.convert('RGBA')
-            
-            # Create a temporary file path
-            temp_dir = tempfile.gettempdir()
-            output_path = os.path.join(temp_dir, f'watermarked_{os.path.basename(image_path)}')
-            
-            # Create watermark layer
-            txt = Image.new('RGBA', img.size, (255, 255, 255, 0))
-            font = get_default_font()
-            
-            # Calculate text size and angle
-            draw = ImageDraw.Draw(txt)
-            text_width = draw.textlength(watermark_text, font=font)
-            text_height = font.size
-            
-            # Calculate diagonal placement
-            angle = math.atan2(img.size[1], img.size[0])
-            diagonal_length = math.sqrt(img.size[0]**2 + img.size[1]**2)
-            
-            # Calculate number of repetitions
-            spacing = diagonal_length / 3  # Show watermark roughly 3 times across diagonal
-            num_repeats = int(diagonal_length / spacing)
-            
-            # Rotate and place watermark multiple times
-            txt = txt.rotate(math.degrees(angle), expand=True)
-            draw = ImageDraw.Draw(txt)
-            
-            for i in range(num_repeats):
-                position = (i * spacing - text_width/2, -text_height/2)
-                draw.text(position, watermark_text, fill=(128, 128, 128, 128), font=font)
-            
-            # Rotate back and resize
-            txt = txt.rotate(-math.degrees(angle), expand=True)
-            txt = txt.resize(img.size)
-            
-            # Composite the watermark with the image
-            watermarked = Image.alpha_composite(img, txt)
-            watermarked = watermarked.convert('RGB')
-            
-            # Save the watermarked image
-            watermarked.save(output_path, quality=95)
-            return output_path
-            
+        user = await watermark_users.find_one({'user_id': user_id})
+        return bool(user)
     except Exception as e:
-        print(f"Error adding image watermark: {e}")
-        return None
+        logger.error(f"Error checking watermark permission for user {user_id}: {e}")
+        return False
 
-async def add_pdf_watermark(pdf_path, watermark_text):
+async def add_watermark_user(user_id: int) -> bool:
+    """Add watermark permission for a user."""
     try:
-        # Create temporary files
-        temp_dir = tempfile.gettempdir()
-        watermark_pdf = os.path.join(temp_dir, 'watermark.pdf')
-        output_path = os.path.join(temp_dir, f'watermarked_{os.path.basename(pdf_path)}')
+        await watermark_users.update_one(
+            {'user_id': user_id},
+            {'$set': {
+                'user_id': user_id,
+                'added_on': datetime.utcnow(),
+                'active': True
+            }},
+            upsert=True
+        )
+        logger.info(f"Added watermark permission for user {user_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error adding watermark user {user_id}: {e}")
+        return False
+
+async def remove_watermark_user(user_id: int) -> bool:
+    """Remove watermark permission from a user."""
+    try:
+        result = await watermark_users.delete_one({'user_id': user_id})
+        if result.deleted_count > 0:
+            logger.info(f"Removed watermark permission from user {user_id}")
+            # Also clear any stored watermark
+            user_watermarks.pop(user_id, None)
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Error removing watermark user {user_id}: {e}")
+        return False
+
+@app.on_message(filters.command(["setwatermark", "sw"]))
+async def set_watermark(_, message):
+    """Set watermark text for a user."""
+    try:
+        user_id = message.from_user.id
+        logger.info(f"User {user_id} attempting to set watermark")
         
-        # Create watermark PDF
-        c = canvas.Canvas(watermark_pdf, pagesize=letter)
-        width, height = letter
+        # Check if user has watermark permission
+        if not (user_id == OWNER_ID or await is_watermark_user(user_id)):
+            await message.reply("❌ You don't have permission to use watermark features.")
+            return
         
-        # Set transparency and rotation
-        c.setFillColorRGB(0.5, 0.5, 0.5, 0.3)  # Gray with 30% opacity
-        c.translate(width/2, height/2)
-        c.rotate(45)
+        # Get watermark text
+        if len(message.command) < 2:
+            await message.reply(
+                "❌ Please provide the watermark text.\n\n"
+                "Usage: `/setwatermark Your Watermark Text` or `/sw Your Watermark Text`"
+            )
+            return
         
-        # Add watermark text
-        c.setFont("Helvetica", 36)
-        text_width = c.stringWidth(watermark_text, "Helvetica", 36)
-        x = -text_width/2
-        y = -18  # Half of font size
-        
-        # Draw watermark multiple times
-        for i in range(-2, 3):
-            for j in range(-2, 3):
-                c.drawString(x + i*200, y + j*200, watermark_text)
-        
-        c.save()
-        
-        # Apply watermark to PDF
-        with open(pdf_path, 'rb') as file:
-            reader = PdfReader(file)
-            writer = PdfWriter()
+        watermark_text = " ".join(message.command[1:])
+        if len(watermark_text) > 100:  # Reasonable limit for watermark text
+            await message.reply("❌ Watermark text too long. Please keep it under 100 characters.")
+            return
             
-            # Get watermark page
-            with open(watermark_pdf, 'rb') as watermark_file:
-                watermark = PdfReader(watermark_file)
-                watermark_page = watermark.pages[0]
+        user_watermarks[user_id] = watermark_text
+        logger.info(f"Set watermark for user {user_id}: {watermark_text}")
+        await message.reply(
+            f"✅ Watermark text set to: `{watermark_text}`\n\n"
+            "This will be applied to your future uploads."
+        )
+    except Exception as e:
+        logger.error(f"Error in set_watermark for user {message.from_user.id}: {e}")
+        await message.reply("❌ Failed to set watermark. Please try again.")
+
+@app.on_message(filters.command(["clearwatermark", "cw"]))
+async def clear_watermark(_, message):
+    """Clear watermark text for a user."""
+    try:
+        user_id = message.from_user.id
+        logger.info(f"User {user_id} attempting to clear watermark")
+        
+        # Check if user has watermark permission
+        if not (user_id == OWNER_ID or await is_watermark_user(user_id)):
+            await message.reply("❌ You don't have permission to use watermark features.")
+            return
+        
+        if user_id in user_watermarks:
+            del user_watermarks[user_id]
+            logger.info(f"Cleared watermark for user {user_id}")
+            await message.reply("✅ Watermark cleared. Future uploads will not have watermarks.")
+        else:
+            await message.reply("ℹ️ You don't have any watermark set.")
+    except Exception as e:
+        logger.error(f"Error in clear_watermark for user {message.from_user.id}: {e}")
+        await message.reply("❌ Failed to clear watermark. Please try again.")
+
+@app.on_message(filters.command(["addwatermarkuser", "awu"]))
+async def add_watermark_user_cmd(_, message):
+    """Add a user to watermark permissions."""
+    try:
+        user_id = message.from_user.id
+        logger.info(f"User {user_id} attempting to add watermark user")
+        
+        # Only owner can add watermark users
+        if user_id != OWNER_ID:
+            await message.reply("❌ Only the bot owner can add watermark users.")
+            return
+        
+        # Get target user ID
+        if len(message.command) != 2:
+            await message.reply(
+                "❌ Please provide the user ID.\n\n"
+                "Usage: `/addwatermarkuser 123456789` or `/awu 123456789`"
+            )
+            return
+        
+        try:
+            target_user_id = int(message.command[1])
+        except ValueError:
+            await message.reply("❌ Invalid user ID. Please provide a valid numeric ID.")
+            return
+            
+        if await add_watermark_user(target_user_id):
+            await message.reply(f"✅ User `{target_user_id}` can now use watermark features.")
+        else:
+            await message.reply("❌ Failed to add watermark permission.")
+    except Exception as e:
+        logger.error(f"Error in add_watermark_user_cmd: {e}")
+        await message.reply("❌ Failed to add watermark user. Please try again.")
+
+@app.on_message(filters.command(["removewatermarkuser", "rwu"]))
+async def remove_watermark_user_cmd(_, message):
+    """Remove a user from watermark permissions."""
+    try:
+        user_id = message.from_user.id
+        logger.info(f"User {user_id} attempting to remove watermark user")
+        
+        # Only owner can remove watermark users
+        if user_id != OWNER_ID:
+            await message.reply("❌ Only the bot owner can remove watermark users.")
+            return
+        
+        # Get target user ID
+        if len(message.command) != 2:
+            await message.reply(
+                "❌ Please provide the user ID.\n\n"
+                "Usage: `/removewatermarkuser 123456789` or `/rwu 123456789`"
+            )
+            return
+        
+        try:
+            target_user_id = int(message.command[1])
+        except ValueError:
+            await message.reply("❌ Invalid user ID. Please provide a valid numeric ID.")
+            return
+            
+        if await remove_watermark_user(target_user_id):
+            await message.reply(f"✅ User `{target_user_id}` can no longer use watermark features.")
+        else:
+            await message.reply("❌ User not found or failed to remove watermark permission.")
+    except Exception as e:
+        logger.error(f"Error in remove_watermark_user_cmd: {e}")
+        await message.reply("❌ Failed to remove watermark user. Please try again.")
+
+@app.on_message(filters.command(["watermarkstatus", "ws"]))
+async def watermark_status(_, message):
+    """Check watermark status and permissions."""
+    try:
+        user_id = message.from_user.id
+        logger.info(f"User {user_id} checking watermark status")
+        
+        has_permission = user_id == OWNER_ID or await is_watermark_user(user_id)
+        current_watermark = user_watermarks.get(user_id, None)
+        
+        status = "📋 **Watermark Status**\n\n"
+        status += f"🔑 Permission: {'✅ Yes' if has_permission else '❌ No'}\n"
+        
+        if has_permission:
+            status += f"💬 Current Watermark: {f'`{current_watermark}`' if current_watermark else 'Not set'}\n"
+            status += "\nℹ️ Available commands:\n"
+            status += "• `/setwatermark <text>` or `/sw <text>` - Set watermark text\n"
+            status += "• `/clearwatermark` or `/cw` - Clear watermark text\n"
+            status += "• `/watermarkstatus` or `/ws` - Check watermark status\n"
+            
+            if user_id == OWNER_ID:
+                status += "\n👑 Owner commands:\n"
+                status += "• `/addwatermarkuser <user_id>` or `/awu <user_id>` - Give watermark permission\n"
+                status += "• `/removewatermarkuser <user_id>` or `/rwu <user_id>` - Remove watermark permission"
                 
-                # Apply to each page
-                for page in reader.pages:
-                    page.merge_page(watermark_page)
-                    writer.add_page(page)
-            
-            # Save result
-            with open(output_path, 'wb') as output_file:
-                writer.write(output_file)
-        
-        # Clean up temporary watermark file
-        os.remove(watermark_pdf)
-        return output_path
-        
+        await message.reply(status)
     except Exception as e:
-        print(f"Error adding PDF watermark: {e}")
-        return None
+        logger.error(f"Error in watermark_status for user {message.from_user.id}: {e}")
+        await message.reply("❌ Failed to get watermark status. Please try again.")
