@@ -21,7 +21,6 @@ import string
 import aiohttp
 from devgagan import app
 from devgagan.core.func import *
-from devgagan.core.mongo.users_db import is_verified_user
 from datetime import datetime, timedelta
 from motor.motor_asyncio import AsyncIOMotorClient
 from config import MONGO_DB, WEBSITE_URL, AD_API, LOG_GROUP  
@@ -56,6 +55,12 @@ async def get_shortened_url(deep_link):
                 if data.get("status") == "success":
                     return data.get("shortenedUrl")
     return None
+ 
+ 
+async def is_user_verified(user_id):
+    """Check if a user has an active session."""
+    session = await token.find_one({"user_id": user_id})
+    return session is not None
  
  
 @app.on_message(filters.command("start"))
@@ -118,7 +123,7 @@ async def smart_handler(client, message):
     if freecheck != 1:
         await message.reply("You are a premium user no need of token 😉")
         return
-    if await is_verified_user(user_id):
+    if await is_user_verified(user_id):
         await message.reply("✅ Your free session is already active enjoy!")
     else:
          
