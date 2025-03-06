@@ -14,6 +14,7 @@
 
 from devgagan.core.mongo.db import users, watermark_users, tokens
 from config import OWNER_ID
+from datetime import datetime
 
 async def is_verified_user(user_id: int) -> bool:
     """Check if a user is verified."""
@@ -25,35 +26,59 @@ async def is_verified_user(user_id: int) -> bool:
         print(f"Error checking user verification: {e}")
         return False
 
-async def get_users() -> list:
-    """Get all users."""
+async def get_users():
+    """Get all users from the database."""
     try:
         user_list = await users.find().to_list(length=None)
-        return [user['user_id'] for user in user_list]
+        return [user['_id'] for user in user_list]
     except Exception as e:
         print(f"Error getting users: {e}")
         return []
 
-async def add_user(user_id: int) -> bool:
-    """Add a new user."""
+async def get_user(user_id: int):
+    """Get a specific user's data."""
     try:
-        result = await users.update_one(
-            {'user_id': user_id},
-            {'$set': {'user_id': user_id}},
+        return await users.find_one({'_id': user_id})
+    except Exception as e:
+        print(f"Error getting user {user_id}: {e}")
+        return None
+
+async def add_user(user_id: int, username: str = None):
+    """Add a new user or update existing user."""
+    try:
+        await users.update_one(
+            {'_id': user_id},
+            {'$set': {
+                '_id': user_id,
+                'username': username,
+                'joined_date': datetime.utcnow()
+            }},
             upsert=True
         )
         return True
     except Exception as e:
-        print(f"Error adding user: {e}")
+        print(f"Error adding user {user_id}: {e}")
         return False
 
-async def remove_user(user_id: int) -> bool:
-    """Remove a user."""
+async def remove_user(user_id: int):
+    """Remove a user from the database."""
     try:
-        result = await users.delete_one({'user_id': user_id})
+        result = await users.delete_one({'_id': user_id})
         return result.deleted_count > 0
     except Exception as e:
-        print(f"Error removing user: {e}")
+        print(f"Error removing user {user_id}: {e}")
+        return False
+
+async def update_user_data(user_id: int, data: dict):
+    """Update user data with custom fields."""
+    try:
+        result = await users.update_one(
+            {'_id': user_id},
+            {'$set': data}
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        print(f"Error updating user {user_id}: {e}")
         return False
 
 async def is_watermark_user(user_id: int) -> bool:
