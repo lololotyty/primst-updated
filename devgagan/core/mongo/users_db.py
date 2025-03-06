@@ -12,17 +12,15 @@
 # License: MIT License
 # ---------------------------------------------------
 
-from devgagan.core.mongo import db
+from devgagan.core.mongo.db import users, watermark_users, tokens
 from config import OWNER_ID
-
-users = db.users
-watermark_users = db.watermark_users
 
 async def is_verified_user(user_id: int) -> bool:
     """Check if a user is verified."""
     try:
-        user = await users.find_one({'user_id': user_id})
-        return bool(user)
+        # Check if user has an active token
+        token = await tokens.find_one({"user_id": user_id})
+        return bool(token)
     except Exception as e:
         print(f"Error checking user verification: {e}")
         return False
