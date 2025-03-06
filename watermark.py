@@ -52,7 +52,9 @@ async def remove_watermark_user(user_id: int) -> bool:
         logger.error(f"Error removing watermark user {user_id}: {e}")
         return False
 
-@app.on_message(filters.command(["setwatermark", "sw"]))
+# Command handlers with multiple prefixes
+setwatermark_filter = filters.command(["setwatermark", "sw"]) | filters.command(["setwatermark", "sw"], prefixes="!")
+@app.on_message(setwatermark_filter)
 async def set_watermark(_, message):
     """Set watermark text for a user."""
     try:
@@ -87,7 +89,8 @@ async def set_watermark(_, message):
         logger.error(f"Error in set_watermark for user {message.from_user.id}: {e}")
         await message.reply("❌ Failed to set watermark. Please try again.")
 
-@app.on_message(filters.command(["clearwatermark", "cw"]))
+clearwatermark_filter = filters.command(["clearwatermark", "cw"]) | filters.command(["clearwatermark", "cw"], prefixes="!")
+@app.on_message(clearwatermark_filter)
 async def clear_watermark(_, message):
     """Clear watermark text for a user."""
     try:
@@ -109,17 +112,13 @@ async def clear_watermark(_, message):
         logger.error(f"Error in clear_watermark for user {message.from_user.id}: {e}")
         await message.reply("❌ Failed to clear watermark. Please try again.")
 
-@app.on_message(filters.command(["addwatermarkuser", "awu"]))
+addwatermarkuser_filter = filters.command(["addwatermarkuser", "awu"]) | filters.command(["addwatermarkuser", "awu"], prefixes="!")
+@app.on_message(addwatermarkuser_filter & filters.user(OWNER_ID))
 async def add_watermark_user_cmd(_, message):
     """Add a user to watermark permissions."""
     try:
         user_id = message.from_user.id
         logger.info(f"User {user_id} attempting to add watermark user")
-        
-        # Only owner can add watermark users
-        if user_id != OWNER_ID:
-            await message.reply("❌ Only the bot owner can add watermark users.")
-            return
         
         # Get target user ID
         if len(message.command) != 2:
@@ -143,17 +142,13 @@ async def add_watermark_user_cmd(_, message):
         logger.error(f"Error in add_watermark_user_cmd: {e}")
         await message.reply("❌ Failed to add watermark user. Please try again.")
 
-@app.on_message(filters.command(["removewatermarkuser", "rwu"]))
+removewatermarkuser_filter = filters.command(["removewatermarkuser", "rwu"]) | filters.command(["removewatermarkuser", "rwu"], prefixes="!")
+@app.on_message(removewatermarkuser_filter & filters.user(OWNER_ID))
 async def remove_watermark_user_cmd(_, message):
     """Remove a user from watermark permissions."""
     try:
         user_id = message.from_user.id
         logger.info(f"User {user_id} attempting to remove watermark user")
-        
-        # Only owner can remove watermark users
-        if user_id != OWNER_ID:
-            await message.reply("❌ Only the bot owner can remove watermark users.")
-            return
         
         # Get target user ID
         if len(message.command) != 2:
@@ -177,7 +172,8 @@ async def remove_watermark_user_cmd(_, message):
         logger.error(f"Error in remove_watermark_user_cmd: {e}")
         await message.reply("❌ Failed to remove watermark user. Please try again.")
 
-@app.on_message(filters.command(["watermarkstatus", "ws"]))
+watermarkstatus_filter = filters.command(["watermarkstatus", "ws"]) | filters.command(["watermarkstatus", "ws"], prefixes="!")
+@app.on_message(watermarkstatus_filter)
 async def watermark_status(_, message):
     """Check watermark status and permissions."""
     try:
