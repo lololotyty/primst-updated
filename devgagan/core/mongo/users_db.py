@@ -12,110 +12,43 @@
 # License: MIT License
 # ---------------------------------------------------
 
-from devgagan.core.mongo.db import users, watermark_users, tokens
-from config import OWNER_ID
-from datetime import datetime
+from config import MONGO_DB
+from motor.motor_asyncio import AsyncIOMotorClient as MongoCli
 
-async def is_verified_user(user_id: int) -> bool:
-    """Check if a user is verified."""
-    try:
-        # Check if user has an active token
-        token = await tokens.find_one({"user_id": user_id})
-        return bool(token)
-    except Exception as e:
-        print(f"Error checking user verification: {e}")
-        return False
+
+mongo = MongoCli(MONGO_DB)
+db = mongo.users
+db = db.users_db
+
 
 async def get_users():
-    """Get all users from the database."""
-    try:
-        user_list = await users.find().to_list(length=None)
-        return [user['_id'] for user in user_list]
-    except Exception as e:
-        print(f"Error getting users: {e}")
-        return []
+  user_list = []
+  async for user in db.users.find({"user": {"$gt": 0}}):
+    user_list.append(user['user'])
+  return user_list
 
-async def get_user(user_id: int):
-    """Get a specific user's data."""
-    try:
-        return await users.find_one({'_id': user_id})
-    except Exception as e:
-        print(f"Error getting user {user_id}: {e}")
-        return None
 
-async def add_user(user_id: int, username: str = None):
-    """Add a new user or update existing user."""
-    try:
-        await users.update_one(
-            {'_id': user_id},
-            {'$set': {
-                '_id': user_id,
-                'username': username,
-                'joined_date': datetime.utcnow()
-            }},
-            upsert=True
-        )
-        return True
-    except Exception as e:
-        print(f"Error adding user {user_id}: {e}")
-        return False
+async def get_user(user):
+  users = await get_users()
+  if user in users:
+    return True
+  else:
+    return False
 
-async def remove_user(user_id: int):
-    """Remove a user from the database."""
-    try:
-        result = await users.delete_one({'_id': user_id})
-        return result.deleted_count > 0
-    except Exception as e:
-        print(f"Error removing user {user_id}: {e}")
-        return False
+async def add_user(user):
+  users = await get_users()
+  if user in users:
+    return
+  else:
+    await db.users.insert_one({"user": user})
 
-async def update_user_data(user_id: int, data: dict):
-    """Update user data with custom fields."""
-    try:
-        result = await users.update_one(
-            {'_id': user_id},
-            {'$set': data}
-        )
-        return result.modified_count > 0
-    except Exception as e:
-        print(f"Error updating user {user_id}: {e}")
-        return False
 
-async def is_watermark_user(user_id: int) -> bool:
-    """Check if a user has watermark permission."""
-    try:
-        # Owner always has watermark permission
-        if user_id == OWNER_ID:
-            return True
-            
-        user = await watermark_users.find_one({'user_id': user_id})
-        return bool(user)
-    except Exception as e:
-        print(f"Error checking watermark permission: {e}")
-        return False
+async def del_user(user):
+  users = await get_users()
+  if not user in users:
+    return
+  else:
+    await db.users.delete_one({"user": user})
+    
 
-async def add_watermark_user(user_id: int) -> bool:
-    """Grant watermark permission to a user."""
-    try:
-        result = await watermark_users.update_one(
-            {'user_id': user_id},
-            {'$set': {'user_id': user_id}},
-            upsert=True
-        )
-        return True
-    except Exception as e:
-        print(f"Error adding watermark user: {e}")
-        return False
 
-async def remove_watermark_user(user_id: int) -> bool:
-    """Remove watermark permission from a user."""
-    try:
-        # Cannot remove owner's watermark permission
-        if user_id == OWNER_ID:
-            return False
-            
-        result = await watermark_users.delete_one({'user_id': user_id})
-        return result.deleted_count > 0
-    except Exception as e:
-        print(f"Error removing watermark user: {e}")
-        return False
