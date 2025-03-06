@@ -1,3 +1,33 @@
+import os
+import time
+import asyncio
+import gc
+from PIL import Image
+import math
+from pyrogram.types import Message
+from pyrogram import Client
+from pyrogram.errors import FloodWait
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram.enums import ParseMode, MessageMediaType
+from devgagan import app
+from devgagan import sex as gf
+from config import OWNER_ID, MONGO_DB as MONGODB_CONNECTION_STRING, LOG_GROUP, STRING, API_ID, API_HASH
+from devgagan.core.mongo.users_db import is_user_verified, get_users, add_user, remove_user, is_watermark_user
+from devgagan.core.watermark import add_image_watermark, add_pdf_watermark
+from devgagan.modules.watermark import user_watermarks
+from devgagan.core.mongo.plans_db import get_premium_users, update_premium_users, remove_premium_users, premium_users
+from devgagan.core.mongo import db as odb
+from telethon import TelegramClient, events, Button
+from telethon.tl.types import DocumentAttributeVideo, Message
+from telethon.sessions import StringSession
+from devgagantools import fast_upload
+from devgagan.core.func import *
+from pymongo import MongoClient
+import re
+from typing import Callable
+import aiofiles
+from devgagan.core.mongo import db as odb
+
 # ---------------------------------------------------
 # File Name: get_func.py
 # Description: A Pyrogram bot for downloading files from Telegram channels or groups 
@@ -12,34 +42,6 @@
 # License: MIT License
 # Improved logic handles
 # ---------------------------------------------------
-
-import asyncio
-import time
-import gc
-import os
-import re
-from typing import Callable
-from devgagan import app
-import aiofiles
-from devgagan import sex as gf
-from telethon.tl.types import DocumentAttributeVideo, Message
-from telethon.sessions import StringSession
-import pymongo
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from pyrogram.errors import ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid
-from pyrogram.enums import MessageMediaType, ParseMode
-from devgagan.core.func import *
-from pyrogram.errors import RPCError
-from pyrogram.types import Message
-from config import MONGO_DB as MONGODB_CONNECTION_STRING, LOG_GROUP, OWNER_ID, STRING, API_ID, API_HASH
-from devgagan.core.mongo import db as odb
-from telethon import TelegramClient, events, Button
-from devgagantools import fast_upload
-from ..core.watermark import add_image_watermark, add_pdf_watermark
-from ..modules.watermark import user_watermarks
-
-def thumbnail(sender):
-    return f'{sender}.jpg' if os.path.exists(f'{sender}.jpg') else None
 
 # MongoDB database name and collection name
 DB_NAME = "smart_users"
@@ -94,16 +96,21 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
         document_formats = {'pdf', 'docx', 'txt', 'epub'}
         image_formats = {'jpg', 'png', 'jpeg'}
         
-        # Apply watermark if user has one set
+        # Apply watermark if user has one set and has permission
         watermarked_file = None
         if sender in user_watermarks and await is_watermark_user(sender):
             file_ext = file.split('.')[-1].lower()
-            if file_ext in image_formats:
-                watermarked_file = await add_image_watermark(file, user_watermarks[sender])
-            elif file_ext == 'pdf':
-                watermarked_file = await add_pdf_watermark(file, user_watermarks[sender])
+            try:
+                if file_ext in image_formats:
+                    watermarked_file = await add_image_watermark(file, user_watermarks[sender])
+                elif file_ext == 'pdf':
+                    watermarked_file = await add_pdf_watermark(file, user_watermarks[sender])
+            except Exception as e:
+                print(f"Watermark error: {e}")
+                # Continue with original file if watermark fails
+                watermarked_file = None
         
-        # Use watermarked file if available
+        # Use watermarked file if available, otherwise use original
         upload_file = watermarked_file if watermarked_file else file
 
         # Pyrogram upload
@@ -1134,3 +1141,6 @@ async def split_and_upload_file(app, sender, target_chat_id, file_path, caption,
 
     await start.delete()
     os.remove(file_path)
+
+def thumbnail(sender):
+    return f'{sender}.jpg' if os.path.exists(f'{sender}.jpg') else None
