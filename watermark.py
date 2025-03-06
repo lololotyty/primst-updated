@@ -1,5 +1,5 @@
-from .. import app
-from ..core.mongo.users_db import add_watermark_user, remove_watermark_user, is_watermark_user
+from devgagan import app
+from devgagan.core.mongo.users_db import add_watermark_user, remove_watermark_user, is_watermark_user
 from pyrogram import filters
 from config import OWNER_ID
 
@@ -88,4 +88,3 @@ async def remove_watermark_user_cmd(_, message):
             await message.reply("❌ User not found or failed to remove watermark permission.")
     except ValueError:
         await message.reply("❌ Invalid user ID. Please provide a valid numeric ID.")
-
