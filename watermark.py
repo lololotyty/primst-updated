@@ -1,12 +1,27 @@
-import logging
-from pyrogram import filters
-from devgagan import app
-from devgagan.core.mongo.db import watermark_users
+from pyrogram import Client, filters
 from config import OWNER_ID
+from devgagan.core.mongo.db import watermark_users
 from datetime import datetime
+import logging
+
+# Module info for plugin system
+__mod_name__ = "Watermark"
+__help__ = """
+💠 **Watermark Commands** 💠
+
+🔹 **User Commands:**
+• /setwatermark - Set your watermark text
+• /clearwatermark - Clear your watermark
+• /watermarkstatus - Check watermark status
+
+🔸 **Owner Commands:**
+• /addwatermarkuser - Add watermark permission
+• /removewatermarkuser - Remove watermark permission
+"""
 
 # Configure logging
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 # Store user watermark text preferences in memory
 user_watermarks = {}
@@ -52,10 +67,8 @@ async def remove_watermark_user(user_id: int) -> bool:
         logger.error(f"Error removing watermark user {user_id}: {e}")
         return False
 
-# Command handlers with multiple prefixes
-setwatermark_filter = filters.command(["setwatermark", "sw"]) | filters.command(["setwatermark", "sw"], prefixes="!")
-@app.on_message(setwatermark_filter)
-async def set_watermark(_, message):
+@Client.on_message(filters.command("setwatermark") & filters.private)
+async def set_watermark(client, message):
     """Set watermark text for a user."""
     try:
         user_id = message.from_user.id
@@ -70,7 +83,7 @@ async def set_watermark(_, message):
         if len(message.command) < 2:
             await message.reply(
                 "❌ Please provide the watermark text.\n\n"
-                "Usage: `/setwatermark Your Watermark Text` or `/sw Your Watermark Text`"
+                "Usage: `/setwatermark Your Watermark Text`"
             )
             return
         
@@ -89,9 +102,8 @@ async def set_watermark(_, message):
         logger.error(f"Error in set_watermark for user {message.from_user.id}: {e}")
         await message.reply("❌ Failed to set watermark. Please try again.")
 
-clearwatermark_filter = filters.command(["clearwatermark", "cw"]) | filters.command(["clearwatermark", "cw"], prefixes="!")
-@app.on_message(clearwatermark_filter)
-async def clear_watermark(_, message):
+@Client.on_message(filters.command("clearwatermark") & filters.private)
+async def clear_watermark(client, message):
     """Clear watermark text for a user."""
     try:
         user_id = message.from_user.id
@@ -112,9 +124,8 @@ async def clear_watermark(_, message):
         logger.error(f"Error in clear_watermark for user {message.from_user.id}: {e}")
         await message.reply("❌ Failed to clear watermark. Please try again.")
 
-addwatermarkuser_filter = filters.command(["addwatermarkuser", "awu"]) | filters.command(["addwatermarkuser", "awu"], prefixes="!")
-@app.on_message(addwatermarkuser_filter & filters.user(OWNER_ID))
-async def add_watermark_user_cmd(_, message):
+@Client.on_message(filters.command("addwatermarkuser") & filters.user(OWNER_ID) & filters.private)
+async def add_watermark_user_cmd(client, message):
     """Add a user to watermark permissions."""
     try:
         user_id = message.from_user.id
@@ -124,7 +135,7 @@ async def add_watermark_user_cmd(_, message):
         if len(message.command) != 2:
             await message.reply(
                 "❌ Please provide the user ID.\n\n"
-                "Usage: `/addwatermarkuser 123456789` or `/awu 123456789`"
+                "Usage: `/addwatermarkuser 123456789`"
             )
             return
         
@@ -142,9 +153,8 @@ async def add_watermark_user_cmd(_, message):
         logger.error(f"Error in add_watermark_user_cmd: {e}")
         await message.reply("❌ Failed to add watermark user. Please try again.")
 
-removewatermarkuser_filter = filters.command(["removewatermarkuser", "rwu"]) | filters.command(["removewatermarkuser", "rwu"], prefixes="!")
-@app.on_message(removewatermarkuser_filter & filters.user(OWNER_ID))
-async def remove_watermark_user_cmd(_, message):
+@Client.on_message(filters.command("removewatermarkuser") & filters.user(OWNER_ID) & filters.private)
+async def remove_watermark_user_cmd(client, message):
     """Remove a user from watermark permissions."""
     try:
         user_id = message.from_user.id
@@ -154,7 +164,7 @@ async def remove_watermark_user_cmd(_, message):
         if len(message.command) != 2:
             await message.reply(
                 "❌ Please provide the user ID.\n\n"
-                "Usage: `/removewatermarkuser 123456789` or `/rwu 123456789`"
+                "Usage: `/removewatermarkuser 123456789`"
             )
             return
         
@@ -172,9 +182,8 @@ async def remove_watermark_user_cmd(_, message):
         logger.error(f"Error in remove_watermark_user_cmd: {e}")
         await message.reply("❌ Failed to remove watermark user. Please try again.")
 
-watermarkstatus_filter = filters.command(["watermarkstatus", "ws"]) | filters.command(["watermarkstatus", "ws"], prefixes="!")
-@app.on_message(watermarkstatus_filter)
-async def watermark_status(_, message):
+@Client.on_message(filters.command("watermarkstatus") & filters.private)
+async def watermark_status(client, message):
     """Check watermark status and permissions."""
     try:
         user_id = message.from_user.id
@@ -189,14 +198,14 @@ async def watermark_status(_, message):
         if has_permission:
             status += f"💬 Current Watermark: {f'`{current_watermark}`' if current_watermark else 'Not set'}\n"
             status += "\nℹ️ Available commands:\n"
-            status += "• `/setwatermark <text>` or `/sw <text>` - Set watermark text\n"
-            status += "• `/clearwatermark` or `/cw` - Clear watermark text\n"
-            status += "• `/watermarkstatus` or `/ws` - Check watermark status\n"
+            status += "• `/setwatermark <text>` - Set watermark text\n"
+            status += "• `/clearwatermark` - Clear watermark text\n"
+            status += "• `/watermarkstatus` - Check watermark status\n"
             
             if user_id == OWNER_ID:
                 status += "\n👑 Owner commands:\n"
-                status += "• `/addwatermarkuser <user_id>` or `/awu <user_id>` - Give watermark permission\n"
-                status += "• `/removewatermarkuser <user_id>` or `/rwu <user_id>` - Remove watermark permission"
+                status += "• `/addwatermarkuser <user_id>` - Give watermark permission\n"
+                status += "• `/removewatermarkuser <user_id>` - Remove watermark permission"
                 
         await message.reply(status)
     except Exception as e:
