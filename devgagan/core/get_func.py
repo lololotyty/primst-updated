@@ -36,6 +36,8 @@ from devgagan.core.mongo import db as odb
 from telethon import TelegramClient, events, Button
 from devgagantools import fast_upload
 import shutil
+import math
+from devgagan.core.utils import humanbytes, TimeFormatter
 
 # MongoDB database name and collection name
 DB_NAME = "smart_users"
@@ -91,6 +93,7 @@ async def format_caption_to_html(caption: str) -> str:
 
 async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
     try:
+        start_time = time.time()
         upload_method = await fetch_upload_method(sender)
         metadata = video_metadata(file)
         width, height, duration = metadata['width'], metadata['height'], metadata['duration']
@@ -98,7 +101,6 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
         # Get custom thumbnail and ensure it exists for each upload
         thumb_path = await get_custom_thumbnail(sender)
         if thumb_path:
-            # Create a copy of thumbnail for each upload to prevent deletion issues
             new_thumb_path = f"{thumb_path}_{os.path.basename(file)}"
             shutil.copy2(thumb_path, new_thumb_path)
             thumb_path = new_thumb_path
@@ -116,10 +118,43 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
         
         file_ext = file.split('.')[-1].lower()
         
+        if not os.path.exists(file):
+            await edit.edit("❌ File not found. Download may have failed.")
+            return
+
         try:
-            if upload_method == "Pyrogram":
+            if upload_method == "telethon":
+                progress_message = await app2.send_message(sender, "**Uploading...**")
+                try:
+                    if file_ext in video_formats:
+                        await app2.send_file(
+                            target_chat_id,
+                            file=file,
+                            thumb=thumb_path,
+                            caption=caption,
+                            force_document=False,
+                            reply_to=topic_id,
+                            progress_callback=lambda d, t: asyncio.get_event_loop().create_task(
+                                progress_bar(d, t, progress_message, start_time)
+                            )
+                        )
+                    else:
+                        await app2.send_file(
+                            target_chat_id,
+                            file=file,
+                            thumb=thumb_path if file_ext not in image_formats else None,
+                            caption=caption,
+                            force_document=True,
+                            reply_to=topic_id,
+                            progress_callback=lambda d, t: asyncio.get_event_loop().create_task(
+                                progress_bar(d, t, progress_message, start_time)
+                            )
+                        )
+                finally:
+                    await progress_message.delete()
+            else:
                 if file_ext in video_formats:
-                    dm = await app.send_video(
+                    await app.send_video(
                         target_chat_id,
                         video=file,
                         thumb=thumb_path,
@@ -129,69 +164,47 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
                         height=height,
                         reply_to_message_id=topic_id,
                         progress=progress_bar,
-                        progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
+                        progress_args=(edit, start_time)
                     )
                 elif file_ext in image_formats:
-                    dm = await app.send_photo(
+                    await app.send_photo(
                         target_chat_id,
                         photo=file,
                         caption=caption,
                         reply_to_message_id=topic_id,
                         progress=progress_bar,
-                        progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
+                        progress_args=(edit, start_time)
                     )
                 else:
-                    dm = await app.send_document(
+                    await app.send_document(
                         target_chat_id,
                         document=file,
-                        caption=caption,
                         thumb=thumb_path,
+                        caption=caption,
                         reply_to_message_id=topic_id,
                         progress=progress_bar,
-                        progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
+                        progress_args=(edit, start_time)
                     )
-            else:
-                if file_ext in video_formats:
-                    await app2.send_file(
-                        target_chat_id,
-                        file=file,
-                        thumb=thumb_path,
-                        caption=caption,
-                        force_document=False,
-                        reply_to=topic_id,
-                        progress_callback=lambda d, t: asyncio.get_event_loop().create_task(
-                            progress(d, t, edit, start)
-                        )
-                    )
-                else:
-                    await app2.send_file(
-                        target_chat_id,
-                        file=file,
-                        thumb=thumb_path if file_ext not in image_formats else None,
-                        caption=caption,
-                        force_document=True,
-                        reply_to=topic_id,
-                        progress_callback=lambda d, t: asyncio.get_event_loop().create_task(
-                            progress(d, t, edit, start)
-                        )
-                    )
-        finally:
-            # Cleanup temporary thumbnail copy
-            if thumb_path and thumb_path.endswith(os.path.basename(file)):
-                try:
-                    os.remove(thumb_path)
-                except:
-                    pass
+        except Exception as upload_error:
+            error_msg = f"Upload Error: {str(upload_error)}"
+            await app.send_message(sender, error_msg)
+            await app.send_message(LOG_GROUP, error_msg)
+            raise upload_error
 
     except Exception as e:
-        await app.send_message(LOG_GROUP, f"**Upload Failed:** {str(e)}")
-        print(f"Error during media upload: {e}")
-
+        error_msg = f"Media Processing Error: {str(e)}"
+        await app.send_message(sender, error_msg)
+        await app.send_message(LOG_GROUP, error_msg)
+        raise e
     finally:
-        if thumb_path and os.path.exists(thumb_path):
-            os.remove(thumb_path)
-        gc.collect()
-
+        # Cleanup temporary files
+        try:
+            if thumb_path and thumb_path.endswith(os.path.basename(file)):
+                os.remove(thumb_path)
+            if watermark_text and file.endswith('_watermarked.' + file_ext):
+                os.remove(file)
+        except Exception as cleanup_error:
+            print(f"Cleanup Error: {str(cleanup_error)}")
 
 async def get_msg(userbot, sender, edit_id, msg_link, i, message):
     try:
@@ -1234,3 +1247,203 @@ async def split_and_upload_file(app, sender, target_chat_id, file_path, caption,
 
     await start.delete()
     os.remove(file_path)
+
+async def progress_bar(current, total, up_msg, start):
+    try:
+        if not up_msg:
+            return
+        if round((current * 100 / total), 2) % 5 == 0:
+            now = time.time()
+            diff = now - start
+            if round(diff % 3.00, 2) == 0:
+                speed = current / diff
+                percentage = current * 100 / total
+                time_to_complete = round(((total - current) / speed))
+                time_to_complete = TimeFormatter(time_to_complete) 
+                progressbar = "[{0}{1}]".format(
+                    ''.join(["●" for i in range(math.floor(percentage / 5))]),
+                    ''.join(["○" for i in range(20 - math.floor(percentage / 5))])
+                )
+                current_message = f"""**Uploading:** {round(percentage, 2)}%
+{progressbar}
+**Done:** {humanbytes(current)} of {humanbytes(total)}
+**Speed:** {humanbytes(speed)}/s
+**ETA:** {time_to_complete if time_to_complete else "0 s"}"""
+                try:
+                    await up_msg.edit(current_message)
+                except:
+                    pass
+    except Exception as e:
+        print(f"Progress Bar Error: {str(e)}")
+
+async def process_media(message_ids, target_chat, edit, topic_id=None):
+    """Process multiple media messages"""
+    try:
+        total = len(message_ids)
+        for i, msg_id in enumerate(message_ids, 1):
+            try:
+                await edit.edit(f"**Processing media {i}/{total}...**")
+                message = await app.get_messages(message.chat.id, msg_id)
+                
+                # Download media
+                file_path = await download_media(message, edit)
+                if not file_path:
+                    continue
+                
+                # Get caption
+                caption = get_caption(message)
+                
+                # Upload media
+                await upload_media(message.from_user.id, target_chat, file_path, caption, edit, topic_id)
+                
+                # Cleanup downloaded file
+                try:
+                    os.remove(file_path)
+                except:
+                    pass
+                    
+            except Exception as msg_error:
+                error_msg = f"Error processing message {msg_id}: {str(msg_error)}"
+                await app.send_message(message.from_user.id, error_msg)
+                await app.send_message(LOG_GROUP, error_msg)
+                continue
+                
+        await edit.edit("✅ Batch processing completed!")
+        
+    except Exception as e:
+        error_msg = f"Batch Processing Error: {str(e)}"
+        await app.send_message(message.from_user.id, error_msg)
+        await app.send_message(LOG_GROUP, error_msg)
+
+async def download_media(message, edit):
+    """Download media with progress tracking and error handling"""
+    try:
+        if not message or not hasattr(message, 'media'):
+            await edit.edit("❌ No media found in message")
+            return None
+
+        start_time = time.time()
+        file_name = get_file_name(message)
+        
+        # Create downloads directory if it doesn't exist
+        if not os.path.exists('downloads'):
+            os.makedirs('downloads')
+            
+        file_path = os.path.join('downloads', file_name)
+        
+        # Show download progress
+        progress_text = await edit.edit("⬇️ **Downloading media...**\n\n0%")
+        
+        try:
+            downloaded_file = await message.download(
+                file_name=file_path,
+                progress=progress_bar,
+                progress_args=(progress_text, start_time)
+            )
+            
+            if not downloaded_file or not os.path.exists(downloaded_file):
+                await edit.edit("❌ Download failed")
+                return None
+                
+            await edit.edit(f"✅ Download completed: {file_name}")
+            return downloaded_file
+            
+        except Exception as download_error:
+            error_msg = f"Download Error: {str(download_error)}"
+            await edit.edit(f"❌ {error_msg}")
+            await app.send_message(LOG_GROUP, error_msg)
+            return None
+            
+    except Exception as e:
+        error_msg = f"Media Download Error: {str(e)}"
+        await edit.edit(f"❌ {error_msg}")
+        await app.send_message(LOG_GROUP, error_msg)
+        return None
+
+def get_file_name(message):
+    """Get appropriate file name from message"""
+    try:
+        if message.document:
+            return message.document.file_name
+        elif message.video:
+            return f"video_{message.video.file_id}.mp4"
+        elif message.audio:
+            return message.audio.file_name or f"audio_{message.audio.file_id}.mp3"
+        elif message.voice:
+            return f"voice_{message.voice.file_id}.ogg"
+        elif message.photo:
+            return f"photo_{message.photo.file_id}.jpg"
+        elif message.animation:
+            return f"animation_{message.animation.file_id}.mp4"
+        elif message.sticker:
+            return f"sticker_{message.sticker.file_id}.webp"
+        elif message.video_note:
+            return f"video_note_{message.video_note.file_id}.mp4"
+        else:
+            return f"file_{int(time.time())}"
+    except Exception:
+        return f"file_{int(time.time())}"
+
+async def batch_link(_, message):
+    try:
+        # Initialize status message
+        status = await message.reply_text("🔄 Processing batch request...")
+        
+        # Extract links
+        if not (message.reply_to_message and message.reply_to_message.text):
+            await status.edit("❌ Please reply to a message containing links")
+            return
+            
+        links = message.reply_to_message.text.split('\n')
+        if not links:
+            await status.edit("❌ No links found in the message")
+            return
+            
+        # Process each link
+        total_links = len(links)
+        processed = 0
+        failed = 0
+        
+        for i, link in enumerate(links, 1):
+            try:
+                await status.edit(f"🔄 Processing link {i}/{total_links}...")
+                
+                # Download media
+                msg = await get_msg(app2, message.from_user.id, status.id, link.strip(), i, message)
+                if not msg:
+                    failed += 1
+                    continue
+                    
+                file_path = await download_media(msg, status)
+                if not file_path:
+                    failed += 1
+                    continue
+                    
+                # Upload media
+                caption = get_caption(msg)
+                await upload_media(message.from_user.id, message.chat.id, file_path, caption, status, None)
+                processed += 1
+                
+                # Cleanup
+                try:
+                    os.remove(file_path)
+                except:
+                    pass
+                    
+            except Exception as e:
+                failed += 1
+                error_msg = f"Error processing link {i}: {str(e)}"
+                await app.send_message(message.from_user.id, error_msg)
+                await app.send_message(LOG_GROUP, error_msg)
+                continue
+                
+        # Final status
+        completion_msg = f"""✅ Batch processing completed!
+✓ Successfully processed: {processed}/{total_links}
+❌ Failed: {failed}"""
+        await status.edit(completion_msg)
+        
+    except Exception as e:
+        error_msg = f"Batch Processing Error: {str(e)}"
+        await message.reply_text(f"❌ {error_msg}")
+        await app.send_message(LOG_GROUP, error_msg)
