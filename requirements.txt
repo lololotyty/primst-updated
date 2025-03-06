@@ -20,5 +20,7 @@ telethon-tgcrypto
 mutagen
 yt-dlp
 speedtest-cli
-PyPDF2
-reportlab
+# Watermark dependencies
+Pillow>=9.5.0
+PyPDF2>=3.0.0
+reportlab>=4.0.0
