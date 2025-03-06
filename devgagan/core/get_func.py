@@ -13,59 +13,37 @@
 # Improved logic handles
 # ---------------------------------------------------
 
-import asyncio
-import time
-import gc
-import os
-import re
-from typing import Callable
-from devgagan import app
-import aiofiles
-from devgagan import sex as gf
-from telethon.tl.types import DocumentAttributeVideo, Message
-from telethon.sessions import StringSession
-import pymongo
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from pyrogram.errors import ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid
-from pyrogram.enums import MessageMediaType, ParseMode
-from devgagan.core.func import *
-from pyrogram.errors import RPCError
-from pyrogram.types import Message
-from config import MONGO_DB as MONGODB_CONNECTION_STRING, LOG_GROUP, OWNER_ID, STRING, API_ID, API_HASH
+from pyrogram import Client
+from pyrogram.enums import ParseMode
+from devgagan import app, pro, sex
 from devgagan.core.mongo import db as odb
 from telethon import TelegramClient, events, Button
 from devgagantools import fast_upload
 import shutil
 import math
-from devgagan.core.utils import humanbytes, TimeFormatter
+import time
+import os
+import asyncio
+import gc
+import re
+import pymongo
+from typing import Callable
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.errors import ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid
+from pyrogram.types import Message
+from config import MONGO_DB as MONGODB_CONNECTION_STRING, LOG_GROUP, OWNER_ID, STRING, API_ID, API_HASH
 
 # MongoDB database name and collection name
 DB_NAME = "smart_users"
-COLLECTION_NAME = "super_user"
-
-def thumbnail(sender):
-    thumb_path = f'{sender}.jpg'
-    return thumb_path if os.path.exists(thumb_path) else None
-
-async def get_custom_thumbnail(sender):
-    """Get custom thumbnail for the user, with fallback to auto-generated thumbnail"""
-    thumb_path = thumbnail(sender)
-    if thumb_path:
-        # Create a copy of thumbnail for each upload to prevent deletion issues
-        new_thumb_path = f"{thumb_path}_{os.path.basename(thumb_path)}"
-        shutil.copy2(thumb_path, new_thumb_path)
-        thumb_path = new_thumb_path
-    return thumb_path
+collection = odb[DB_NAME]
 
 VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'flv', 'wmv', 'webm', 'mpg', 'mpeg', '3gp', 'ts', 'm4v', 'f4v', 'vob']
 DOCUMENT_EXTENSIONS = ['pdf', 'docs']
 
 mongo_app = pymongo.MongoClient(MONGODB_CONNECTION_STRING)
 db = mongo_app[DB_NAME]
-collection = db[COLLECTION_NAME]
 
 if STRING:
-    from devgagan import pro
     print("App imported by shimperd.")
 else:
     pro = None
@@ -1082,130 +1060,38 @@ async def is_file_size_exceeding(file_path, size_limit):
 
 user_progress = {}
 
-def progress_callback(done, total, user_id):
-    # Check if this user already has progress tracking
-    if user_id not in user_progress:
-        user_progress[user_id] = {
-            'previous_done': 0,
-            'previous_time': time.time()
-        }
-    
-    # Retrieve the user's tracking data
-    user_data = user_progress[user_id]
-    
-    # Calculate the percentage of progress
-    percent = (done / total) * 100
-    
-    # Format the progress bar
-    completed_blocks = int(percent // 10)
-    remaining_blocks = 10 - completed_blocks
-    progress_bar = "♦" * completed_blocks + "◇" * remaining_blocks
-    
-    # Convert done and total to MB for easier reading
-    done_mb = done / (1024 * 1024)  # Convert bytes to MB
-    total_mb = total / (1024 * 1024)
-    
-    # Calculate the upload speed (in bytes per second)
-    speed = done - user_data['previous_done']
-    elapsed_time = time.time() - user_data['previous_time']
-    
-    if elapsed_time > 0:
-        speed_bps = speed / elapsed_time  # Speed in bytes per second
-        speed_mbps = (speed_bps * 8) / (1024 * 1024)  # Speed in Mbps
-    else:
-        speed_mbps = 0
-    
-    # Estimated time remaining (in seconds)
-    if speed_bps > 0:
-        remaining_time = (total - done) / speed_bps
-    else:
-        remaining_time = 0
-    
-    # Convert remaining time to minutes
-    remaining_time_min = remaining_time / 60
-    
-    # Format the final output as needed
-    final = (
-        f"╭──────────────────╮\n"
-        f"│     **__Shimp Lib ⚡ Uploader__**       \n"
-        f"├──────────\n"
-        f"│ {progress_bar}\n\n"
-        f"│ **__Progress:__** {percent:.2f}%\n"
-        f"│ **__Done:__** {done_mb:.2f} MB / {total_mb:.2f} MB\n"
-        f"│ **__Speed:__** {speed_mbps:.2f} Mbps\n"
-        f"│ **__ETA:__** {remaining_time_min:.2f} min\n"
-        f"╰──────────────────╯\n\n"
-        f"**__Powered by Shimperd__**"
-    )
-    
-    # Update tracking variables for the user
-    user_data['previous_done'] = done
-    user_data['previous_time'] = time.time()
-    
-    return final
+async def progress_bar(current, total, up_msg, start):
+    """Show progress bar for upload/download"""
+    try:
+        if not up_msg or not total:
+            return
+            
+        now = time.time()
+        diff = now - start
+        
+        # Only update every 2 seconds to avoid flood
+        if diff < 2:
+            return
+            
+        speed = current / diff if diff > 0 else 0
+        percentage = (current * 100) / total
+        
+        progress = "".join("●" for _ in range(math.floor(percentage / 10)))
+        progress += "".join("○" for _ in range(10 - math.floor(percentage / 10)))
+        
+        text = f"""**Progress:** {round(percentage, 2)}%
+[{progress}]
+**Speed:** {humanbytes(speed)}/s
+**Done:** {humanbytes(current)} of {humanbytes(total)}
+**Time Left:** {TimeFormatter(int((total - current) / speed)) if speed > 0 else '0s'}"""
 
-
-def dl_progress_callback(done, total, user_id):
-    # Check if this user already has progress tracking
-    if user_id not in user_progress:
-        user_progress[user_id] = {
-            'previous_done': 0,
-            'previous_time': time.time()
-        }
-    
-    # Retrieve the user's tracking data
-    user_data = user_progress[user_id]
-    
-    # Calculate the percentage of progress
-    percent = (done / total) * 100
-    
-    # Format the progress bar
-    completed_blocks = int(percent // 10)
-    remaining_blocks = 10 - completed_blocks
-    progress_bar = "♦" * completed_blocks + "◇" * remaining_blocks
-    
-    # Convert done and total to MB for easier reading
-    done_mb = done / (1024 * 1024)  # Convert bytes to MB
-    total_mb = total / (1024 * 1024)
-    
-    # Calculate the upload speed (in bytes per second)
-    speed = done - user_data['previous_done']
-    elapsed_time = time.time() - user_data['previous_time']
-    
-    if elapsed_time > 0:
-        speed_bps = speed / elapsed_time  # Speed in bytes per second
-        speed_mbps = (speed_bps * 8) / (1024 * 1024)  # Speed in Mbps
-    else:
-        speed_mbps = 0
-    
-    # Estimated time remaining (in seconds)
-    if speed_bps > 0:
-        remaining_time = (total - done) / speed_bps
-    else:
-        remaining_time = 0
-    
-    # Convert remaining time to minutes
-    remaining_time_min = remaining_time / 60
-    
-    # Format the final output as needed
-    final = (
-        f"╭──────────────────╮\n"
-        f"│     **__Shimp Lib ⚡ Downloader__**       \n"
-        f"├──────────\n"
-        f"│ {progress_bar}\n\n"
-        f"│ **__Progress:__** {percent:.2f}%\n"
-        f"│ **__Done:__** {done_mb:.2f} MB / {total_mb:.2f} MB\n"
-        f"│ **__Speed:__** {speed_mbps:.2f} Mbps\n"
-        f"│ **__ETA:__** {remaining_time_min:.2f} min\n"
-        f"╰──────────────────╯\n\n"
-        f"**__Powered by Shimperd__**"
-    )
-    
-    # Update tracking variables for the user
-    user_data['previous_done'] = done
-    user_data['previous_time'] = time.time()
-    
-    return final
+        try:
+            await up_msg.edit(text)
+        except Exception:
+            pass
+            
+    except Exception as e:
+        print(f"Progress Bar Error: {str(e)}")
 
 # split function .... ?( to handle gareeb bot coder jo string n lga paaye)
 
@@ -1248,34 +1134,6 @@ async def split_and_upload_file(app, sender, target_chat_id, file_path, caption,
     await start.delete()
     os.remove(file_path)
 
-async def progress_bar(current, total, up_msg, start):
-    try:
-        if not up_msg:
-            return
-        if round((current * 100 / total), 2) % 5 == 0:
-            now = time.time()
-            diff = now - start
-            if round(diff % 3.00, 2) == 0:
-                speed = current / diff
-                percentage = current * 100 / total
-                time_to_complete = round(((total - current) / speed))
-                time_to_complete = TimeFormatter(time_to_complete) 
-                progressbar = "[{0}{1}]".format(
-                    ''.join(["●" for i in range(math.floor(percentage / 5))]),
-                    ''.join(["○" for i in range(20 - math.floor(percentage / 5))])
-                )
-                current_message = f"""**Uploading:** {round(percentage, 2)}%
-{progressbar}
-**Done:** {humanbytes(current)} of {humanbytes(total)}
-**Speed:** {humanbytes(speed)}/s
-**ETA:** {time_to_complete if time_to_complete else "0 s"}"""
-                try:
-                    await up_msg.edit(current_message)
-                except:
-                    pass
-    except Exception as e:
-        print(f"Progress Bar Error: {str(e)}")
-
 async def process_media(message_ids, target_chat, edit, topic_id=None):
     """Process multiple media messages"""
     try:
@@ -1315,6 +1173,156 @@ async def process_media(message_ids, target_chat, edit, topic_id=None):
         await app.send_message(message.from_user.id, error_msg)
         await app.send_message(LOG_GROUP, error_msg)
 
+async def batch_link(_, message):
+    """Process batch of links for downloading and uploading"""
+    try:
+        # Initialize status message
+        status = await message.reply_text("🔄 Processing batch request...")
+        
+        # Extract links
+        if not (message.reply_to_message and message.reply_to_message.text):
+            await status.edit("❌ Please reply to a message containing links")
+            return
+            
+        links = [link.strip() for link in message.reply_to_message.text.split('\n') if link.strip()]
+        if not links:
+            await status.edit("❌ No valid links found in the message")
+            return
+            
+        # Process each link
+        total_links = len(links)
+        processed = 0
+        failed = 0
+        
+        for i, link in enumerate(links, 1):
+            try:
+                status_text = f"""🔄 Processing link {i}/{total_links}
+✓ Completed: {processed}
+❌ Failed: {failed}
+⏳ Current: Getting message..."""
+                await status.edit(status_text)
+                
+                # Get message from link
+                msg = await get_msg(app2, message.from_user.id, status.id, link, i, message)
+                if not msg:
+                    failed += 1
+                    continue
+                
+                # Update status for download
+                await status.edit(status_text.replace("Getting message...", "Downloading..."))
+                
+                # Download media
+                file_path = await download_media(msg, status)
+                if not file_path:
+                    failed += 1
+                    continue
+                
+                # Update status for upload
+                await status.edit(status_text.replace("Downloading...", "Uploading..."))
+                
+                # Get caption and upload
+                caption = get_caption(msg)
+                await upload_media(message.from_user.id, message.chat.id, file_path, caption, status, None)
+                processed += 1
+                
+                # Cleanup downloaded file
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                except Exception as cleanup_error:
+                    print(f"Cleanup error for {file_path}: {str(cleanup_error)}")
+                
+                # Small delay between files to prevent flood
+                await asyncio.sleep(2)
+                
+            except Exception as e:
+                failed += 1
+                error_msg = f"Error processing link {i}: {str(e)}"
+                await app.send_message(message.from_user.id, error_msg)
+                await app.send_message(LOG_GROUP, error_msg)
+                continue
+        
+        # Final status
+        completion_msg = f"""✅ Batch processing completed!
+✓ Successfully processed: {processed}/{total_links}
+❌ Failed: {failed}
+
+Note: Check above messages for any specific errors."""
+        await status.edit(completion_msg)
+        
+    except Exception as e:
+        error_msg = f"Batch Processing Error: {str(e)}"
+        await message.reply_text(f"❌ {error_msg}")
+        await app.send_message(LOG_GROUP, error_msg)
+
+def humanbytes(size):
+    """Convert bytes to human readable format"""
+    if not size:
+        return "0 B"
+    power = 2 ** 10
+    n = 0
+    power_labels = {0: '', 1: 'K', 2: 'M', 3: 'G', 4: 'T'}
+    while size > power:
+        size /= power
+        n += 1
+    return f"{round(size, 2)} {power_labels[n]}B"
+
+def TimeFormatter(seconds: int) -> str:
+    """Format seconds into human readable time"""
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    
+    time_parts = []
+    if days > 0:
+        time_parts.append(f"{days}d")
+    if hours > 0:
+        time_parts.append(f"{hours}h")
+    if minutes > 0:
+        time_parts.append(f"{minutes}m")
+    if seconds > 0:
+        time_parts.append(f"{seconds}s")
+        
+    return " ".join(time_parts) if time_parts else "0s"
+
+def thumbnail(sender):
+    """Get thumbnail path for a user"""
+    thumb_path = f'thumb/{sender}.jpg'
+    return thumb_path if os.path.exists(thumb_path) else None
+
+async def get_custom_thumbnail(sender):
+    """Get custom thumbnail for the user, with fallback to auto-generated thumbnail"""
+    thumb_path = thumbnail(sender)
+    if thumb_path:
+        # Create a copy of thumbnail for each upload to prevent deletion issues
+        new_thumb_path = f"{thumb_path}_{os.path.basename(thumb_path)}"
+        shutil.copy2(thumb_path, new_thumb_path)
+        thumb_path = new_thumb_path
+    return thumb_path
+
+def get_file_name(message):
+    """Get appropriate file name from message"""
+    try:
+        if message.document:
+            return message.document.file_name
+        if message.video:
+            return message.video.file_name if message.video.file_name else f"video_{int(time.time())}.mp4"
+        if message.audio:
+            return message.audio.file_name or f"audio_{int(time.time())}.mp3"
+        if message.voice:
+            return f"voice_{int(time.time())}.ogg"
+        if message.photo:
+            return f"photo_{int(time.time())}.jpg"
+        if message.animation:
+            return message.animation.file_name or f"animation_{int(time.time())}.mp4"
+        if message.sticker:
+            return f"sticker_{int(time.time())}.webp"
+        if message.video_note:
+            return f"video_note_{int(time.time())}.mp4"
+        return f"file_{int(time.time())}"
+    except Exception:
+        return f"file_{int(time.time())}"
+
 async def download_media(message, edit):
     """Download media with progress tracking and error handling"""
     try:
@@ -1326,13 +1334,11 @@ async def download_media(message, edit):
         file_name = get_file_name(message)
         
         # Create downloads directory if it doesn't exist
-        if not os.path.exists('downloads'):
-            os.makedirs('downloads')
-            
+        os.makedirs('downloads', exist_ok=True)
         file_path = os.path.join('downloads', file_name)
         
         # Show download progress
-        progress_text = await edit.edit("⬇️ **Downloading media...**\n\n0%")
+        progress_text = await edit.edit("⬇️ **Downloading media...**")
         
         try:
             downloaded_file = await message.download(
@@ -1345,7 +1351,6 @@ async def download_media(message, edit):
                 await edit.edit("❌ Download failed")
                 return None
                 
-            await edit.edit(f"✅ Download completed: {file_name}")
             return downloaded_file
             
         except Exception as download_error:
@@ -1359,91 +1364,3 @@ async def download_media(message, edit):
         await edit.edit(f"❌ {error_msg}")
         await app.send_message(LOG_GROUP, error_msg)
         return None
-
-def get_file_name(message):
-    """Get appropriate file name from message"""
-    try:
-        if message.document:
-            return message.document.file_name
-        elif message.video:
-            return f"video_{message.video.file_id}.mp4"
-        elif message.audio:
-            return message.audio.file_name or f"audio_{message.audio.file_id}.mp3"
-        elif message.voice:
-            return f"voice_{message.voice.file_id}.ogg"
-        elif message.photo:
-            return f"photo_{message.photo.file_id}.jpg"
-        elif message.animation:
-            return f"animation_{message.animation.file_id}.mp4"
-        elif message.sticker:
-            return f"sticker_{message.sticker.file_id}.webp"
-        elif message.video_note:
-            return f"video_note_{message.video_note.file_id}.mp4"
-        else:
-            return f"file_{int(time.time())}"
-    except Exception:
-        return f"file_{int(time.time())}"
-
-async def batch_link(_, message):
-    try:
-        # Initialize status message
-        status = await message.reply_text("🔄 Processing batch request...")
-        
-        # Extract links
-        if not (message.reply_to_message and message.reply_to_message.text):
-            await status.edit("❌ Please reply to a message containing links")
-            return
-            
-        links = message.reply_to_message.text.split('\n')
-        if not links:
-            await status.edit("❌ No links found in the message")
-            return
-            
-        # Process each link
-        total_links = len(links)
-        processed = 0
-        failed = 0
-        
-        for i, link in enumerate(links, 1):
-            try:
-                await status.edit(f"🔄 Processing link {i}/{total_links}...")
-                
-                # Download media
-                msg = await get_msg(app2, message.from_user.id, status.id, link.strip(), i, message)
-                if not msg:
-                    failed += 1
-                    continue
-                    
-                file_path = await download_media(msg, status)
-                if not file_path:
-                    failed += 1
-                    continue
-                    
-                # Upload media
-                caption = get_caption(msg)
-                await upload_media(message.from_user.id, message.chat.id, file_path, caption, status, None)
-                processed += 1
-                
-                # Cleanup
-                try:
-                    os.remove(file_path)
-                except:
-                    pass
-                    
-            except Exception as e:
-                failed += 1
-                error_msg = f"Error processing link {i}: {str(e)}"
-                await app.send_message(message.from_user.id, error_msg)
-                await app.send_message(LOG_GROUP, error_msg)
-                continue
-                
-        # Final status
-        completion_msg = f"""✅ Batch processing completed!
-✓ Successfully processed: {processed}/{total_links}
-❌ Failed: {failed}"""
-        await status.edit(completion_msg)
-        
-    except Exception as e:
-        error_msg = f"Batch Processing Error: {str(e)}"
-        await message.reply_text(f"❌ {error_msg}")
-        await app.send_message(LOG_GROUP, error_msg)
