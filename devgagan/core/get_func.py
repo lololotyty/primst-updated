@@ -35,6 +35,8 @@ from config import MONGO_DB as MONGODB_CONNECTION_STRING, LOG_GROUP, OWNER_ID, S
 from devgagan.core.mongo import db as odb
 from telethon import TelegramClient, events, Button
 from devgagantools import fast_upload
+from ..core.watermark import add_image_watermark, add_pdf_watermark
+from ..modules.watermark import user_watermarks
 
 def thumbnail(sender):
     return f'{sender}.jpg' if os.path.exists(f'{sender}.jpg') else None
@@ -79,7 +81,7 @@ async def format_caption_to_html(caption: str) -> str:
 
 async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
     try:
-        upload_method = await fetch_upload_method(sender)  # Fetch the upload method (Pyrogram or Telethon)
+        upload_method = await fetch_upload_method(sender)
         metadata = video_metadata(file)
         width, height, duration = metadata['width'], metadata['height'], metadata['duration']
         
@@ -91,13 +93,25 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
         video_formats = {'mp4', 'mkv', 'avi', 'mov'}
         document_formats = {'pdf', 'docx', 'txt', 'epub'}
         image_formats = {'jpg', 'png', 'jpeg'}
+        
+        # Apply watermark if user has one set
+        watermarked_file = None
+        if sender in user_watermarks and await is_watermark_user(sender):
+            file_ext = file.split('.')[-1].lower()
+            if file_ext in image_formats:
+                watermarked_file = await add_image_watermark(file, user_watermarks[sender])
+            elif file_ext == 'pdf':
+                watermarked_file = await add_pdf_watermark(file, user_watermarks[sender])
+        
+        # Use watermarked file if available
+        upload_file = watermarked_file if watermarked_file else file
 
         # Pyrogram upload
         if upload_method == "Pyrogram":
             if file.split('.')[-1].lower() in video_formats:
                 dm = await app.send_video(
                     chat_id=target_chat_id,
-                    video=file,
+                    video=upload_file,
                     caption=caption,
                     height=height,
                     width=width,
@@ -113,7 +127,7 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
             elif file.split('.')[-1].lower() in image_formats:
                 dm = await app.send_photo(
                     chat_id=target_chat_id,
-                    photo=file,
+                    photo=upload_file,
                     caption=caption,
                     thumb=thumb_path,
                     parse_mode=ParseMode.MARKDOWN,
@@ -125,7 +139,7 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
             else:
                 dm = await app.send_document(
                     chat_id=target_chat_id,
-                    document=file,
+                    document=upload_file,
                     caption=caption,
                     thumb=thumb_path,
                     reply_to_message_id=topic_id,
@@ -142,7 +156,7 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
             progress_message = await gf.send_message(sender, "**__Uploading...__**")
             caption = await format_caption_to_html(caption)
             uploaded = await fast_upload(
-                gf, file,
+                gf, upload_file,
                 reply=progress_message,
                 name=None,
                 progress_bar_function=lambda done, total: progress_callback(done, total, sender)
@@ -179,9 +193,11 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
         print(f"Error during media upload: {e}")
 
     finally:
-        # Only remove auto-generated thumbnails, not user-set ones
+        # Clean up temporary files
         if thumb_path and os.path.exists(thumb_path) and thumb_path != f'{sender}.jpg':
             os.remove(thumb_path)
+        if watermarked_file and os.path.exists(watermarked_file):
+            os.remove(watermarked_file)
         gc.collect()
 
 
