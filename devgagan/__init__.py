@@ -67,6 +67,11 @@ pro = Client(
     device_model="Bot"
 )
 
+# Initialize userbot client
+userrbot = None
+if STRING:
+    userrbot = pro
+
 # Initialize Telethon client with optimized settings
 telethon_client = TelegramClient(
     'telethon_bot', 
@@ -128,7 +133,7 @@ except Exception as e:
 
 # Export all necessary clients and variables
 __all__ = [
-    'app', 'pro', 'telethon_client',
+    'app', 'pro', 'telethon_client', 'userrbot',
     'BOT_ID', 'BOT_NAME', 'BOT_USERNAME',
     'tclient', 'tdb', 'token'
 ]
