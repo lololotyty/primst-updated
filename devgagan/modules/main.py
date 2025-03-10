@@ -18,9 +18,9 @@ import random
 import string
 import asyncio
 from pyrogram import filters, Client
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from devgagan import app, telethon_client, pro, userrbot
-from config import API_ID, API_HASH, FREEMIUM_LIMIT, PREMIUM_LIMIT, OWNER_ID
-from devgagan.core.get_func import get_msg, get_appropriate_client
+from devgagan.core.get_func import get_msg, process_video
 from devgagan.core.func import *
 from devgagan.core.mongo import db
 from pyrogram.errors import FloodWait
@@ -39,7 +39,7 @@ batch_mode = {}
 async def process_and_upload_link(userbot, user_id, msg_id, link, retry_count, message):
     try:
         # Use appropriate client if userbot is None
-        client = userbot if userbot else get_appropriate_client()
+        client = userbot if userbot else get_client()
         await get_msg(client, user_id, msg_id, link, retry_count, message)
         await asyncio.sleep(15)
     finally:
@@ -67,6 +67,67 @@ async def set_interval(user_id, interval_minutes=45):
     now = datetime.now()
     # Set the cooldown interval for the user
     interval_set[user_id] = now + timedelta(seconds=interval_minutes)
+
+def get_client():
+    return userrbot if userrbot else app
+
+@app.on_message(filters.command("start"))
+async def start(client: Client, message: Message):
+    await message.reply_text(
+        "Hi! I'm a media downloader bot. Send me links to download media.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("Help", callback_data="help")]
+        ])
+    )
+
+@app.on_message(filters.regex(r"https?://t\.me/[^/]+/\d+"))
+async def handle_telegram_link(client: Client, message: Message):
+    try:
+        msg_link = message.text or message.caption
+        if not msg_link:
+            await message.reply_text("Please provide a valid Telegram link.")
+            return
+
+        # Get appropriate client
+        active_client = get_client()
+        
+        # Send initial processing message
+        status_msg = await message.reply_text("Processing your request...")
+        
+        # Handle the message download/upload
+        await get_msg(
+            userbot=active_client,
+            sender=message.chat.id,
+            edit_id=status_msg.id,
+            msg_link=msg_link,
+            i=0,
+            message=status_msg
+        )
+        
+    except Exception as e:
+        await message.reply_text(f"Error: {str(e)}")
+
+@app.on_message(filters.regex(r"https?://(?:www\.)?(?:youtube\.com|youtu\.be)/"))
+async def handle_youtube_link(client: Client, message: Message):
+    try:
+        url = message.text or message.caption
+        if not url:
+            await message.reply_text("Please provide a valid YouTube link.")
+            return
+            
+        # Send initial processing message
+        status_msg = await message.reply_text("Processing YouTube link...")
+        
+        # Process the video
+        await process_video(
+            url=url,
+            user_id=message.from_user.id,
+            edit_id=status_msg.id,
+            message=status_msg
+        )
+        
+    except Exception as e:
+        await message.reply_text(f"Error processing YouTube link: {str(e)}")
 
 @app.on_message(
     filters.regex(r'https?://(?:www\.)?t\.me/[^\s]+|tg://openmessage\?user_id=\w+&message_id=\d+')
@@ -306,3 +367,7 @@ async def stop_batch(_, message):
             message.chat.id, 
             "No active batch processing is running to cancel."
         )
+
+@app.on_error()
+async def error_handler(client: Client, e: Exception):
+    print(f"Error in main module: {e}")
