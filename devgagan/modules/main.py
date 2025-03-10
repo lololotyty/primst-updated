@@ -18,9 +18,9 @@ import random
 import string
 import asyncio
 from pyrogram import filters, Client
-from devgagan import app
+from devgagan import app, telethon_client, pro, userrbot
 from config import API_ID, API_HASH, FREEMIUM_LIMIT, PREMIUM_LIMIT, OWNER_ID
-from devgagan.core.get_func import get_msg
+from devgagan.core.get_func import get_msg, get_appropriate_client
 from devgagan.core.func import *
 from devgagan.core.mongo import db
 from pyrogram.errors import FloodWait
@@ -28,10 +28,9 @@ from datetime import datetime, timedelta
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 import subprocess
 from devgagan.modules.shrink import is_user_verified
+
 async def generate_random_name(length=8):
     return ''.join(random.choices(string.ascii_lowercase, k=length))
-
-
 
 users_loop = {}
 interval_set = {}
@@ -39,7 +38,9 @@ batch_mode = {}
 
 async def process_and_upload_link(userbot, user_id, msg_id, link, retry_count, message):
     try:
-        await get_msg(userbot, user_id, msg_id, link, retry_count, message)
+        # Use appropriate client if userbot is None
+        client = userbot if userbot else get_appropriate_client()
+        await get_msg(client, user_id, msg_id, link, retry_count, message)
         await asyncio.sleep(15)
     finally:
         pass
@@ -66,7 +67,6 @@ async def set_interval(user_id, interval_minutes=45):
     now = datetime.now()
     # Set the cooldown interval for the user
     interval_set[user_id] = now + timedelta(seconds=interval_minutes)
-    
 
 @app.on_message(
     filters.regex(r'https?://(?:www\.)?t\.me/[^\s]+|tg://openmessage\?user_id=\w+&message_id=\d+')
@@ -125,7 +125,6 @@ async def single_link(_, message):
             await msg.delete()
         except Exception:
             pass
-
 
 async def initialize_userbot(user_id): # this ensure the single startup .. even if logged in or not
     """Initialize the userbot session for the given user."""
