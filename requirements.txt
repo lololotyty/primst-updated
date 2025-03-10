@@ -1,24 +1,27 @@
 # https://www.dl.dropboxusercontent.com/scl/fi/35w0i0hnsioq63x7eumdd/pyrogagan.zip?rlkey=mq4b56v0z7w7mgj3c0o3sqgo1&st=n7prfm1y&dl=0
+# Core dependencies
 pyrofork
 psutil
-aiofiles
-pillow
 devgagantools
-tgcrypto
 pyromod
-opencv-python-headless
 requests
-motor
-pytz
 flask
-aiohttp
+werkzeug==2.2.2
 telethon
 aiojobs
-werkzeug==2.2.2
+pytz
+tgcrypto
+motor
+aiohttp
 apscheduler 
 telethon-tgcrypto
 mutagen
-yt-dlp
+
+# Media handling
+yt-dlp>=2023.12.30
+aria2p>=1.1.0
 speedtest-cli
 PyPDF2
+pillow
+opencv-python-headless
 reportlab
