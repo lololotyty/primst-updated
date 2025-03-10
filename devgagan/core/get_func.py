@@ -19,9 +19,7 @@ import gc
 import os
 import re
 from typing import Callable
-from devgagan import app
-import aiofiles
-from devgagan import sex as gf
+from devgagan import app, pro, userrbot, telethon_client
 from telethon.tl.types import DocumentAttributeVideo, Message
 from telethon.sessions import StringSession
 import pymongo
@@ -94,8 +92,9 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
 
         # Pyrogram upload
         if upload_method == "Pyrogram":
+            client = get_appropriate_client()
             if file.split('.')[-1].lower() in video_formats:
-                dm = await app.send_video(
+                dm = await client.send_video(
                     chat_id=target_chat_id,
                     video=file,
                     caption=caption,
@@ -111,11 +110,10 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
                 await dm.copy(LOG_GROUP)
                 
             elif file.split('.')[-1].lower() in image_formats:
-                dm = await app.send_photo(
+                dm = await client.send_photo(
                     chat_id=target_chat_id,
                     photo=file,
                     caption=caption,
-                    thumb=thumb_path,
                     parse_mode=ParseMode.MARKDOWN,
                     progress=progress_bar,
                     reply_to_message_id=topic_id,
@@ -123,7 +121,7 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
                 )
                 await dm.copy(LOG_GROUP)
             else:
-                dm = await app.send_document(
+                dm = await client.send_document(
                     chat_id=target_chat_id,
                     document=file,
                     caption=caption,
@@ -133,16 +131,15 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
                     parse_mode=ParseMode.MARKDOWN,
                     progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
                 )
-                await asyncio.sleep(2)
                 await dm.copy(LOG_GROUP)
 
         # Telethon upload
         elif upload_method == "Telethon":
             await edit.delete()
-            progress_message = await gf.send_message(sender, "**__Uploading...__**")
+            progress_message = await telethon_client.send_message(sender, "**__Uploading...__**")
             caption = await format_caption_to_html(caption)
             uploaded = await fast_upload(
-                gf, file,
+                telethon_client, file,
                 reply=progress_message,
                 name=None,
                 progress_bar_function=lambda done, total: progress_callback(done, total, sender)
@@ -158,7 +155,7 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
                 )
             ] if file.split('.')[-1].lower() in video_formats else []
 
-            await gf.send_file(
+            await telethon_client.send_file(
                 target_chat_id,
                 uploaded,
                 caption=caption,
@@ -166,7 +163,7 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
                 reply_to=topic_id,
                 thumb=thumb_path
             )
-            await gf.send_file(
+            await telethon_client.send_file(
                 LOG_GROUP,
                 uploaded,
                 caption=caption,
@@ -177,6 +174,11 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
     except Exception as e:
         await app.send_message(LOG_GROUP, f"**Upload Failed:** {str(e)}")
         print(f"Error during media upload: {e}")
+        if edit and not edit.empty:
+            try:
+                await edit.edit(f"**Upload failed:** {str(e)}")
+            except:
+                pass
 
     finally:
         # Only remove auto-generated thumbnails, not user-set ones
@@ -187,6 +189,9 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
 
 async def get_msg(userbot, sender, edit_id, msg_link, i, message):
     try:
+        # Use appropriate client if userbot is None
+        client = userbot if userbot else get_appropriate_client()
+        
         # Sanitize the message link
         msg_link = msg_link.split("?single")[0]
         chat, msg_id = None, None
@@ -194,6 +199,7 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         size_limit = 2 * 1024 * 1024 * 1024  # 1.99 GB size limit
         file = ''
         edit = ''
+        
         # Extract chat and message ID for valid Telegram links
         if 't.me/c/' in msg_link or 't.me/b/' in msg_link:
             parts = msg_link.split("/")
@@ -236,7 +242,7 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             return
             
         # Fetch the target message
-        msg = await userbot.get_messages(chat, msg_id)
+        msg = await client.get_messages(chat, msg_id)
         if not msg or msg.service or msg.empty:
             return
 
@@ -270,7 +276,7 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         edit = await app.edit_message_text(sender, edit_id, "**Downloading...**")
 
         # Download media
-        file = await userbot.download_media(
+        file = await client.download_media(
             msg,
             file_name=file_name,
             progress=progress_bar,
@@ -412,7 +418,10 @@ async def copy_message_with_chat_id(app, userbot, sender, chat_id, message_id, e
     size_limit = 2 * 1024 * 1024 * 1024  # 2 GB size limit
 
     try:
-        msg = await app.get_messages(chat_id, message_id)
+        # Use appropriate client if userbot is None
+        client = userbot if userbot else get_appropriate_client()
+        
+        msg = await client.get_messages(chat_id, message_id)
         custom_caption = get_user_caption_preference(sender)
         final_caption = format_caption(msg.caption or '', sender, custom_caption)
 
@@ -1118,3 +1127,10 @@ async def split_and_upload_file(app, sender, target_chat_id, file_path, caption,
 
     await start.delete()
     os.remove(file_path)
+
+def get_appropriate_client():
+    if userrbot:
+        return userrbot
+    elif pro:
+        return pro
+    return app
