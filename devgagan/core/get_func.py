@@ -588,10 +588,11 @@ m = None
 SET_PIC = "settings.jpg"
 MESS = "Customize by your end and Configure your settings ..."
 
-@gf.on(events.NewMessage(incoming=True, pattern='/settings'))
+@telethon_client.on(events.NewMessage(incoming=True, pattern='/settings'))
 async def settings_command(event):
     user_id = event.sender_id
-    await send_settings_message(event.chat_id, user_id)
+    chat_id = event.chat_id
+    await send_settings_message(chat_id, user_id)
 
 async def send_settings_message(chat_id, user_id):
     
@@ -607,7 +608,7 @@ async def send_settings_message(chat_id, user_id):
         [Button.url("Report Errors", "https://telegram.dog/shimps_bot")]
     ]
 
-    await gf.send_file(
+    await telethon_client.send_file(
         chat_id,
         file=SET_PIC,
         caption=MESS,
@@ -617,7 +618,7 @@ async def send_settings_message(chat_id, user_id):
 
 pending_photos = {}
 
-@gf.on(events.CallbackQuery)
+@telethon_client.on(events.CallbackQuery)
 async def callback_query_handler(event):
     user_id = event.sender_id
     
@@ -724,7 +725,7 @@ async def callback_query_handler(event):
             await event.respond("No thumbnail found to remove.")
     
 
-@gf.on(events.NewMessage(func=lambda e: e.sender_id in pending_photos))
+@telethon_client.on(events.NewMessage(func=lambda e: e.sender_id in pending_photos))
 async def save_thumbnail(event):
     user_id = event.sender_id  # Use event.sender_id as user_id
 
@@ -749,7 +750,7 @@ def save_user_upload_method(user_id, method):
         upsert=True  # Create a new document if one doesn't exist
     )
 
-@gf.on(events.NewMessage)
+@telethon_client.on(events.NewMessage)
 async def handle_user_input(event):
     user_id = event.sender_id
     if user_id in sessions:
@@ -804,7 +805,7 @@ async def handle_user_input(event):
         del sessions[user_id]
     
 # Command to store channel IDs
-@gf.on(events.NewMessage(incoming=True, pattern='/lock'))
+@telethon_client.on(events.NewMessage(incoming=True, pattern='/lock'))
 async def lock_command_handler(event):
     if event.sender_id not in OWNER_ID:
         return await event.respond("You are not authorized to use this command.")
