@@ -17,3 +17,4 @@ AD_API = getenv("AD_API", "52b4a2cf4687d8f2b7bc2943f618e78cb")
 STRING = getenv("STRING", None)
 YT_COOKIES = getenv("YT_COOKIES", None)
 INSTA_COOKIES = getenv("INSTA_COOKIES", None)
+DEFAULT_SESSION = getenv("DEFAUL_SESSION", None)  # added old method of invite link joining
