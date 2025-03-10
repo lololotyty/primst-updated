@@ -15,19 +15,21 @@
 import asyncio
 import logging
 import sys
-from pyrogram import Client, ConnectionMode
+from pyrogram import Client
 from pyrogram.enums import ParseMode 
 from config import API_ID, API_HASH, BOT_TOKEN, STRING, MONGO_DB
 from telethon.sync import TelegramClient
 from motor.motor_asyncio import AsyncIOMotorClient
 import time
 
-loop = asyncio.get_event_loop()
-
+# Initialize logging
 logging.basicConfig(
-    format="[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s",
     level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+logger = logging.getLogger(__name__)
+
+loop = asyncio.get_event_loop()
 
 botStartTime = time.time()
 
@@ -41,14 +43,12 @@ app = Client(
     parse_mode=ParseMode.MARKDOWN,
     sleep_threshold=5,  # Reduced from 10
     max_concurrent_transmissions=20,  # Reduced from 50
-    retry_delay=1,
-    no_updates=True,
+    in_memory=True,  # Optimize for performance
+    no_updates=True,  # Disable updates for better startup
     ipv6=False,  # Disable IPv6 to speed up connections
-    connection_mode=ConnectionMode.TCP_FULL,  # Use TCP FULL mode for stability
-    device_model="Telegram Bot",  # Simple device model
     system_version="1.0",
     app_version="1.0",
-    lang_code="en"
+    device_model="Bot"
 )
 
 pro = Client(
@@ -59,14 +59,12 @@ pro = Client(
     workers=50,
     sleep_threshold=5,
     max_concurrent_transmissions=20,
-    retry_delay=1,
+    in_memory=True,
     no_updates=True,
     ipv6=False,
-    connection_mode=ConnectionMode.TCP_FULL,
-    device_model="Telegram Bot",
     system_version="1.0",
     app_version="1.0",
-    lang_code="en"
+    device_model="Bot"
 )
 
 # Initialize Telethon client with optimized settings
@@ -79,56 +77,58 @@ telethon_client = TelegramClient(
     auto_reconnect=True,
     sequential_updates=True,
     flood_sleep_threshold=5,
-    raise_last_call_error=False,
-    device_model="Telegram Bot",
+    device_model="Bot",
     system_version="1.0",
-    app_version="1.0",
-    lang_code="en"
+    app_version="1.0"
 )
 
 # MongoDB setup
 tclient = AsyncIOMotorClient(MONGO_DB)
-tdb = tclient["telegram_bot"]  # Your database
-token = tdb["tokens"]  # Your tokens collection
+tdb = tclient.bot
+token = tdb.token
 
-async def create_ttl_index():
-    """Ensure the TTL index exists for the `tokens` collection."""
-    await token.create_index("expires_at", expireAfterSeconds=0)
-
-# Run the TTL index creation when the bot starts
 async def setup_database():
-    await create_ttl_index()
+    """Setup MongoDB with TTL index"""
+    await token.create_index("time", expireAfterSeconds=24*60*60)
     print("MongoDB TTL index created.")
 
 async def start_clients():
+    """Start all clients concurrently"""
     global BOT_ID, BOT_NAME, BOT_USERNAME
-    await setup_database()
     
-    # Start all clients concurrently
-    await asyncio.gather(
-        app.start(),
-        pro.start() if STRING else asyncio.sleep(0),
-        telethon_client.start(bot_token=BOT_TOKEN)
-    )
-    
-    # Get bot info
-    getme = await app.get_me()
-    BOT_ID = getme.id
-    BOT_USERNAME = getme.username
-    BOT_NAME = f"{getme.first_name} {getme.last_name}" if getme.last_name else getme.first_name
-    
-    print("All clients started successfully!")
+    try:
+        # Setup database first
+        await setup_database()
+        
+        # Start all clients concurrently
+        await asyncio.gather(
+            app.start(),
+            pro.start() if STRING else asyncio.sleep(0),
+            telethon_client.start(bot_token=BOT_TOKEN)
+        )
+        
+        # Get bot info
+        getme = await app.get_me()
+        BOT_ID = getme.id
+        BOT_USERNAME = getme.username
+        BOT_NAME = f"{getme.first_name} {getme.last_name}" if getme.last_name else getme.first_name
+        
+        logger.info("All clients started successfully!")
+        
+    except Exception as e:
+        logger.error(f"Error during startup: {e}")
+        sys.exit(1)
 
 # Run startup sequence
 try:
     loop.run_until_complete(start_clients())
 except Exception as e:
-    print(f"Error during startup: {e}")
+    logger.error(f"Error during startup: {e}")
     sys.exit(1)
 
 # Export all necessary clients and variables
 __all__ = [
-    'app', 'pro', 'telethon_client', 'userrbot',
+    'app', 'pro', 'telethon_client',
     'BOT_ID', 'BOT_NAME', 'BOT_USERNAME',
     'tclient', 'tdb', 'token'
 ]
