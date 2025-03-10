@@ -58,11 +58,11 @@ async def setup_database():
     await create_ttl_index()
     print("MongoDB TTL index created.")
 
-# You can call this in your main bot file before starting the bot
-
-async def restrict_bot():
+async def start_clients():
     global BOT_ID, BOT_NAME, BOT_USERNAME
     await setup_database()
+    
+    # Start the main bot
     await app.start()
     getme = await app.get_me()
     BOT_ID = getme.id
@@ -71,7 +71,14 @@ async def restrict_bot():
         BOT_NAME = getme.first_name + " " + getme.last_name
     else:
         BOT_NAME = getme.first_name
+    
+    # Start the user bot if STRING is provided
     if STRING:
         await pro.start()
+    
+    # Start Telethon client
+    await sex.start(bot_token=BOT_TOKEN)
 
-loop.run_until_complete(restrict_bot())
+    print("All clients started successfully!")
+
+loop.run_until_complete(start_clients())
