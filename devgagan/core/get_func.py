@@ -33,6 +33,57 @@ from config import MONGO_DB as MONGODB_CONNECTION_STRING, LOG_GROUP, OWNER_ID, S
 from devgagan.core.mongo import db as odb
 from telethon import TelegramClient, events, Button
 from devgagantools import fast_upload
+import aiohttp
+import aiofiles
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+import asyncio
+from io import BytesIO
+
+# Optimized chunk size for better performance
+CHUNK_SIZE = 524288  # 512KB
+MAX_CONCURRENT_DOWNLOADS = 4
+MAX_RETRIES = 3
+
+async def download_chunk(session, url, start, end, file, semaphore):
+    headers = {'Range': f'bytes={start}-{end}'}
+    retries = 0
+    
+    while retries < MAX_RETRIES:
+        try:
+            async with semaphore:
+                async with session.get(url, headers=headers) as response:
+                    if response.status == 206:
+                        chunk = await response.read()
+                        async with aiofiles.open(file, 'rb+') as f:
+                            await f.seek(start)
+                            await f.write(chunk)
+                        return True
+        except Exception as e:
+            print(f"Chunk download error: {e}")
+            retries += 1
+            await asyncio.sleep(1)
+    return False
+
+async def parallel_download(url, file_path, file_size):
+    chunk_size = CHUNK_SIZE
+    chunks = range(0, file_size, chunk_size)
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+    
+    async with aiohttp.ClientSession() as session:
+        # Pre-allocate file
+        async with aiofiles.open(file_path, 'wb') as f:
+            await f.truncate(file_size)
+        
+        # Download chunks in parallel
+        tasks = []
+        for start in chunks:
+            end = min(start + chunk_size - 1, file_size - 1)
+            task = download_chunk(session, url, start, end, file_path, semaphore)
+            tasks.append(task)
+        
+        results = await asyncio.gather(*tasks)
+        return all(results)
 
 def thumbnail(sender):
     return f'{sender}.jpg' if os.path.exists(f'{sender}.jpg') else None
@@ -72,31 +123,44 @@ async def format_caption_to_html(caption: str) -> str:
     caption = re.sub(r"\|\|(.*?)\|\|", r"<details>\1</details>", caption)
     caption = re.sub(r"\[(.*?)\]\((.*?)\)", r'<a href="\2">\1</a>', caption)
     return caption.strip() if caption else None
-    
 
-
-async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
+async def optimized_upload_media(sender, target_chat_id, file, caption, edit, topic_id):
     try:
-        upload_method = await fetch_upload_method(sender)  # Fetch the upload method (Pyrogram or Telethon)
+        upload_method = await fetch_upload_method(sender)
         metadata = video_metadata(file)
         width, height, duration = metadata['width'], metadata['height'], metadata['duration']
         
-        # Get user's saved thumbnail or generate one
+        # Get or generate thumbnail
         thumb_path = thumbnail(sender)
         if not thumb_path and file.split('.')[-1].lower() in {'mp4', 'mkv', 'avi', 'mov'}:
             thumb_path = await screenshot(file, duration, sender)
 
+        # Determine file type
+        file_ext = file.split('.')[-1].lower()
         video_formats = {'mp4', 'mkv', 'avi', 'mov'}
         document_formats = {'pdf', 'docx', 'txt', 'epub'}
         image_formats = {'jpg', 'png', 'jpeg'}
 
-        # Pyrogram upload
+        # Optimize file for upload
+        optimized_file = await optimize_media(file, file_ext)
+        
         if upload_method == "Pyrogram":
             client = get_appropriate_client()
-            if file.split('.')[-1].lower() in video_formats:
+            
+            # Use memory buffer for small files
+            if os.path.getsize(optimized_file) < 10 * 1024 * 1024:  # 10MB
+                async with aiofiles.open(optimized_file, 'rb') as f:
+                    file_data = await f.read()
+                file_buffer = BytesIO(file_data)
+                file_buffer.name = os.path.basename(optimized_file)
+                upload_file = file_buffer
+            else:
+                upload_file = optimized_file
+
+            if file_ext in video_formats:
                 dm = await client.send_video(
                     chat_id=target_chat_id,
-                    video=file,
+                    video=upload_file,
                     caption=caption,
                     height=height,
                     width=width,
@@ -105,46 +169,57 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
                     reply_to_message_id=topic_id,
                     parse_mode=ParseMode.MARKDOWN,
                     progress=progress_bar,
-                    progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
+                    progress_args=(
+                        "╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────",
+                        edit,
+                        time.time()
+                    )
                 )
-                await dm.copy(LOG_GROUP)
-                
-            elif file.split('.')[-1].lower() in image_formats:
+            elif file_ext in image_formats:
                 dm = await client.send_photo(
                     chat_id=target_chat_id,
-                    photo=file,
+                    photo=upload_file,
                     caption=caption,
                     parse_mode=ParseMode.MARKDOWN,
                     progress=progress_bar,
                     reply_to_message_id=topic_id,
-                    progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
+                    progress_args=(
+                        "╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────",
+                        edit,
+                        time.time()
+                    )
                 )
-                await dm.copy(LOG_GROUP)
             else:
                 dm = await client.send_document(
                     chat_id=target_chat_id,
-                    document=file,
+                    document=upload_file,
                     caption=caption,
                     thumb=thumb_path,
                     reply_to_message_id=topic_id,
                     progress=progress_bar,
                     parse_mode=ParseMode.MARKDOWN,
-                    progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
+                    progress_args=(
+                        "╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────",
+                        edit,
+                        time.time()
+                    )
                 )
-                await dm.copy(LOG_GROUP)
+            await dm.copy(LOG_GROUP)
 
-        # Telethon upload
         elif upload_method == "Telethon":
             await edit.delete()
             progress_message = await telethon_client.send_message(sender, "**__Uploading...__**")
-            caption = await format_caption_to_html(caption)
+            
+            # Use fast_upload with optimized settings
             uploaded = await fast_upload(
-                telethon_client, file,
+                telethon_client,
+                optimized_file,
                 reply=progress_message,
-                name=None,
-                progress_bar_function=lambda done, total: progress_callback(done, total, sender)
+                name=os.path.basename(optimized_file),
+                progress_bar_function=lambda done, total: progress_callback(done, total, sender),
+                part_size_kb=512,  # 512KB chunks
+                parallel_upload=True
             )
-            await progress_message.delete()
 
             attributes = [
                 DocumentAttributeVideo(
@@ -153,7 +228,7 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
                     h=height,
                     supports_streaming=True
                 )
-            ] if file.split('.')[-1].lower() in video_formats else []
+            ] if file_ext in video_formats else []
 
             await telethon_client.send_file(
                 target_chat_id,
@@ -161,14 +236,9 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
                 caption=caption,
                 attributes=attributes,
                 reply_to=topic_id,
-                thumb=thumb_path
-            )
-            await telethon_client.send_file(
-                LOG_GROUP,
-                uploaded,
-                caption=caption,
-                attributes=attributes,
-                thumb=thumb_path
+                thumb=thumb_path,
+                part_size_kb=512,
+                upload_speed=2
             )
 
     except Exception as e:
@@ -179,13 +249,56 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
                 await edit.edit(f"**Upload failed:** {str(e)}")
             except:
                 pass
-
     finally:
-        # Only remove auto-generated thumbnails, not user-set ones
+        if 'optimized_file' in locals() and optimized_file != file:
+            os.remove(optimized_file)
         if thumb_path and os.path.exists(thumb_path) and thumb_path != f'{sender}.jpg':
             os.remove(thumb_path)
-        gc.collect()
 
+async def optimize_media(file_path, file_ext):
+    """Optimize media file for faster upload"""
+    video_formats = {'mp4', 'mkv', 'avi', 'mov'}
+    image_formats = {'jpg', 'png', 'jpeg'}
+    
+    if file_ext in video_formats:
+        # Optimize video
+        output_path = f"{file_path}_optimized.{file_ext}"
+        cmd = [
+            'ffmpeg', '-i', file_path,
+            '-c:v', 'libx264', '-preset', 'ultrafast',
+            '-c:a', 'aac', '-b:a', '128k',
+            '-movflags', '+faststart',
+            output_path
+        ]
+        
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await process.communicate()
+            
+            if os.path.exists(output_path) and os.path.getsize(output_path) < os.path.getsize(file_path):
+                return output_path
+        except Exception as e:
+            print(f"Video optimization failed: {e}")
+    
+    elif file_ext in image_formats:
+        # Optimize image
+        from PIL import Image
+        output_path = f"{file_path}_optimized.{file_ext}"
+        
+        try:
+            with Image.open(file_path) as img:
+                img.save(output_path, quality=85, optimize=True)
+            
+            if os.path.exists(output_path) and os.path.getsize(output_path) < os.path.getsize(file_path):
+                return output_path
+        except Exception as e:
+            print(f"Image optimization failed: {e}")
+    
+    return file_path
 
 async def get_msg(userbot, sender, edit_id, msg_link, i, message):
     try:
@@ -314,7 +427,7 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         elif file_size > size_limit:
             await handle_large_file(file, sender, edit, caption)
         else:
-            await upload_media(sender, target_chat_id, file, caption, edit, topic_id)
+            await optimized_upload_media(sender, target_chat_id, file, caption, edit, topic_id)
 
     except (ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid):
         await app.edit_message_text(sender, edit_id, "Have you joined the channel?")
@@ -466,7 +579,7 @@ async def copy_message_with_chat_id(app, userbot, sender, chat_id, message_id, e
                 elif file_size > size_limit:
                     await handle_large_file(file, sender, edit, final_caption)
                     return
-                await upload_media(sender, target_chat_id, file, final_caption, edit, topic_id)
+                await optimized_upload_media(sender, target_chat_id, file, final_caption, edit, topic_id)
             elif msg.audio:
                 result = await app.send_audio(target_chat_id, file, caption=final_caption, reply_to_message_id=topic_id)
             elif msg.voice:
@@ -501,7 +614,7 @@ async def send_media_message(app, target_chat_id, msg, caption, topic_id):
     
     # Fallback to copy_message in case of any exceptions
     return await app.copy_message(target_chat_id, msg.chat.id, msg.id, reply_to_message_id=topic_id)
-    
+
 
 def format_caption(original_caption, sender, custom_caption):
     delete_words = load_delete_words(sender)
@@ -516,7 +629,7 @@ def format_caption(original_caption, sender, custom_caption):
     # Append custom caption if available
     return f"{original_caption}\n\n__**{custom_caption}**__" if custom_caption else original_caption
 
-    
+
 # ------------------------ Button Mode Editz FOR SETTINGS ----------------------------
 
 # Define a dictionary to store user chat IDs
