@@ -39,6 +39,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import asyncio
 from io import BytesIO
+import yt_dlp
 
 # Optimized chunk size for better performance
 CHUNK_SIZE = 524288  # 512KB
@@ -300,6 +301,167 @@ async def optimize_media(file_path, file_ext):
     
     return file_path
 
+import os
+import re
+import time
+import asyncio
+import logging
+from io import BytesIO
+import yt_dlp
+from pyrogram.types import Message
+from devgagan import app
+from .utils import humanbytes, format_time
+
+# Create downloads directory if it doesn't exist
+DOWNLOADS_DIR = os.path.join(os.getcwd(), "downloads")
+os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+
+async def process_video(url, user_id, edit_id, message):
+    """Process and download YouTube videos with optimized settings"""
+    try:
+        # Send initial status
+        await message.edit("Fetching video information...")
+        
+        # Ensure downloads directory exists
+        video_dir = os.path.join(DOWNLOADS_DIR, str(user_id))
+        os.makedirs(video_dir, exist_ok=True)
+        
+        # Configure yt-dlp options
+        ydl_opts = {
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',  # Prefer MP4
+            'outtmpl': os.path.join(video_dir, '%(title)s.%(ext)s'),
+            'noplaylist': True,
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,
+            'concurrent_fragment_downloads': 8,  # Parallel downloads
+            'file_access_retries': 5,
+            'fragment_retries': 5,
+            'retries': 5,
+            'buffersize': 1024*1024,  # 1MB buffer
+            'progress_hooks': [lambda d: asyncio.run_coroutine_threadsafe(
+                download_progress_hook(d, message),
+                asyncio.get_event_loop()
+            )],
+            'external_downloader': 'aria2c',  # Use aria2c for faster downloads
+            'external_downloader_args': [
+                '--max-connection-per-server=8',
+                '--min-split-size=1M',
+                '--max-concurrent-downloads=8',
+                '--continue=true'  # Resume partial downloads
+            ]
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            try:
+                # Get video info
+                info = await asyncio.get_event_loop().run_in_executor(
+                    None, 
+                    lambda: ydl.extract_info(url, download=False)
+                )
+                
+                if not info:
+                    await message.edit("Could not fetch video information!")
+                    return
+                    
+                # Check file size
+                filesize = info.get('filesize', 0) or info.get('filesize_approx', 0)
+                if filesize > 2 * 1024 * 1024 * 1024:  # 2GB limit
+                    await message.edit("Video is too large (>2GB)! Cannot process.")
+                    return
+                    
+                # Update status with video info
+                await message.edit(
+                    f"Downloading: {info['title']}\n"
+                    f"Duration: {format_duration(info.get('duration', 0))}\n"
+                    f"Size: {humanbytes(filesize)}"
+                )
+                
+                # Download video
+                file_path = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: ydl.download([url])
+                )
+                
+                # Find the downloaded file
+                video_file = None
+                for file in os.listdir(video_dir):
+                    if file.endswith(('.mp4', '.mkv', '.webm')):
+                        video_file = os.path.join(video_dir, file)
+                        break
+                
+                if not video_file or not os.path.exists(video_file):
+                    await message.edit("Download failed or file not found!")
+                    return
+                
+                # Upload to Telegram
+                await message.edit("Uploading to Telegram...")
+                caption = (
+                    f"**Title:** {info['title']}\n"
+                    f"**Duration:** {format_duration(info.get('duration', 0))}\n"
+                    f"**Requested by:** {message.from_user.mention}"
+                )
+                
+                await optimized_upload_media(
+                    message.chat.id,
+                    message.chat.id,
+                    video_file,
+                    caption,
+                    message,
+                    None
+                )
+                
+            except Exception as e:
+                await message.edit(f"Error while processing: {str(e)}")
+                return
+            finally:
+                # Cleanup
+                try:
+                    if video_file and os.path.exists(video_file):
+                        os.remove(video_file)
+                    if os.path.exists(video_dir):
+                        os.rmdir(video_dir)
+                except OSError:
+                    pass
+                    
+    except Exception as e:
+        await message.edit(f"Error processing video: {str(e)}")
+        
+async def download_progress_hook(d, message):
+    """Progress hook for yt-dlp downloads"""
+    if d['status'] == 'downloading':
+        try:
+            total = d.get('total_bytes', 0) or d.get('total_bytes_estimate', 0)
+            downloaded = d.get('downloaded_bytes', 0)
+            
+            if total > 0:
+                percentage = downloaded * 100 / total
+                speed = d.get('speed', 0)
+                eta = d.get('eta', 0)
+                
+                # Only update every 5% to reduce message edits
+                if int(percentage) % 5 == 0:
+                    progress = (
+                        f"**Downloading: {percentage:.1f}%**\n"
+                        f"**Speed:** {humanbytes(speed)}/s\n"
+                        f"**ETA:** {format_time(eta)}\n"
+                        f"**Size:** {humanbytes(downloaded)}/{humanbytes(total)}"
+                    )
+                    
+                    await message.edit(progress)
+                
+        except Exception as e:
+            logging.error(f"Progress hook error: {e}")
+
+def format_duration(seconds):
+    """Format duration in seconds to HH:MM:SS"""
+    if not seconds:
+        return "00:00:00"
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    seconds = seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
 async def get_msg(userbot, sender, edit_id, msg_link, i, message):
     try:
         client = userbot if userbot else get_appropriate_client()
@@ -496,141 +658,6 @@ async def get_final_caption(msg, sender):
         final_caption = final_caption.replace(word, replace_word)
         
     return final_caption if final_caption else None
-
-
-async def download_user_stories(userbot, chat_id, msg_id, edit, sender):
-    try:
-        # Fetch the story using the provided chat ID and message ID
-        story = await userbot.get_stories(chat_id, msg_id)
-        if not story:
-            await edit.edit("No story available for this user.")
-            return  
-        if not story.media:
-            await edit.edit("The story doesn't contain any media.")
-            return
-        await edit.edit("Downloading Story...")
-        file_path = await userbot.download_media(story)
-        print(f"Story downloaded: {file_path}")
-        # Send the downloaded story based on its type
-        if story.media:
-            await edit.edit("Uploading Story...")
-            if story.media == MessageMediaType.VIDEO:
-                await app.send_video(sender, file_path)
-            elif story.media == MessageMediaType.DOCUMENT:
-                await app.send_document(sender, file_path)
-            elif story.media == MessageMediaType.PHOTO:
-                await app.send_photo(sender, file_path)
-        if file_path and os.path.exists(file_path):
-            os.remove(file_path)  
-        await edit.edit("Story processed successfully.")
-    except RPCError as e:
-        print(f"Failed to fetch story: {e}")
-        await edit.edit(f"Error: {e}")
-        
-async def copy_message_with_chat_id(app, userbot, sender, chat_id, message_id, edit):
-    target_chat_id = user_chat_ids.get(message.chat.id, message.chat.id)
-    file = None
-    result = None
-    size_limit = 2 * 1024 * 1024 * 1024  # 2 GB size limit
-
-    try:
-        # Use appropriate client if userbot is None
-        client = userbot if userbot else get_appropriate_client()
-        
-        msg = await client.get_messages(chat_id, message_id)
-        custom_caption = get_user_caption_preference(sender)
-        final_caption = format_caption(msg.caption or '', sender, custom_caption)
-
-        # Parse target_chat_id and topic_id
-        topic_id = None
-        if '/' in str(target_chat_id):
-            target_chat_id, topic_id = map(int, target_chat_id.split('/', 1))
-
-        # Handle different media types
-        if msg.media:
-            result = await send_media_message(app, target_chat_id, msg, final_caption, topic_id)
-            return
-        elif msg.text:
-            result = await app.copy_message(target_chat_id, chat_id, message_id, reply_to_message_id=topic_id)
-            return
-
-        # Fallback if result is None
-        if result is None:
-            await edit.edit("Trying if it is a group...")
-            chat_id = (await userbot.get_chat(f"@{chat_id}")).id
-            msg = await userbot.get_messages(chat_id, message_id)
-
-            if not msg or msg.service or msg.empty:
-                return
-
-            final_caption = format_caption(msg.caption.markdown if msg.caption else "", sender, custom_caption)
-            file = await userbot.download_media(
-                msg,
-                progress=progress_bar,
-                progress_args=("╭─────────────────────╮\n│      **__Downloading__...**\n├─────────────────────", edit, time.time())
-            )
-            file = await rename_file(file, sender)
-
-            if msg.photo:
-                result = await app.send_photo(target_chat_id, file, caption=final_caption, reply_to_message_id=topic_id)
-            elif msg.video or msg.document:
-                freecheck = await chk_user(chat_id, sender)
-                if file_size > size_limit and (freecheck == 1 or pro is None):
-                    await edit.delete()
-                    await split_and_upload_file(app, sender, target_chat_id, file, caption, topic_id)
-                    return       
-                elif file_size > size_limit:
-                    await handle_large_file(file, sender, edit, final_caption)
-                    return
-                await optimized_upload_media(sender, target_chat_id, file, final_caption, edit, topic_id)
-            elif msg.audio:
-                result = await app.send_audio(target_chat_id, file, caption=final_caption, reply_to_message_id=topic_id)
-            elif msg.voice:
-                result = await app.send_voice(target_chat_id, file, reply_to_message_id=topic_id)
-            elif msg.sticker:
-                result = await app.send_sticker(target_chat_id, msg.sticker.file_id, reply_to_message_id=topic_id)
-            else:
-                await edit.edit("Unsupported media type.")
-
-    except Exception as e:
-        print(f"Error : {e}")
-        pass
-        #error_message = f"Error occurred while processing message: {str(e)}"
-        # await app.send_message(sender, error_message)
-        # await app.send_message(sender, f" Baka Make Bot admin in your Channel - {target_chat_id} and restart the process after /cancel")
-
-    finally:
-        if file and os.path.exists(file):
-            os.remove(file)
-
-
-async def send_media_message(app, target_chat_id, msg, caption, topic_id):
-    try:
-        if msg.video:
-            return await app.send_video(target_chat_id, msg.video.file_id, caption=caption, reply_to_message_id=topic_id)
-        if msg.document:
-            return await app.send_document(target_chat_id, msg.document.file_id, caption=caption, reply_to_message_id=topic_id)
-        if msg.photo:
-            return await app.send_photo(target_chat_id, msg.photo.file_id, caption=caption, reply_to_message_id=topic_id)
-    except Exception as e:
-        print(f"Error while sending media: {e}")
-    
-    # Fallback to copy_message in case of any exceptions
-    return await app.copy_message(target_chat_id, msg.chat.id, msg.id, reply_to_message_id=topic_id)
-
-
-def format_caption(original_caption, sender, custom_caption):
-    delete_words = load_delete_words(sender)
-    replacements = load_replacement_words(sender)
-
-    # Remove and replace words in the caption
-    for word in delete_words:
-        original_caption = original_caption.replace(word, '  ')
-    for word, replace_word in replacements.items():
-        original_caption = original_caption.replace(word, replace_word)
-
-    # Append custom caption if available
-    return f"{original_caption}\n\n__**{custom_caption}**__" if custom_caption else original_caption
 
 
 # ------------------------ Button Mode Editz FOR SETTINGS ----------------------------
