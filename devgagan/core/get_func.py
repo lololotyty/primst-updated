@@ -82,11 +82,18 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
         upload_method = await fetch_upload_method(sender)  # Fetch the upload method (Pyrogram or Telethon)
         metadata = video_metadata(file)
         width, height, duration = metadata['width'], metadata['height'], metadata['duration']
+        thumb_path = None
         
-        # Get user's saved thumbnail or generate one
-        thumb_path = thumbnail(sender)
-        if not thumb_path and file.split('.')[-1].lower() in {'mp4', 'mkv', 'avi', 'mov'}:
-            thumb_path = await screenshot(file, duration, sender)
+        try:
+            # Get user's saved thumbnail or generate one
+            thumb_path = thumbnail(sender)
+            if not thumb_path and file.split('.')[-1].lower() in {'mp4', 'mkv', 'avi', 'mov'}:
+                thumb_path = await screenshot(file, duration, sender)
+                if not thumb_path:
+                    print(f"Failed to generate thumbnail for {file}")
+        except Exception as e:
+            print(f"Error generating thumbnail: {e}")
+            thumb_path = None
 
         video_formats = {'mp4', 'mkv', 'avi', 'mov'}
         document_formats = {'pdf', 'docx', 'txt', 'epub'}
@@ -179,9 +186,13 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
         print(f"Error during media upload: {e}")
 
     finally:
-        # Only remove auto-generated thumbnails, not user-set ones
-        if thumb_path and os.path.exists(thumb_path) and thumb_path != f'{sender}.jpg':
-            os.remove(thumb_path)
+        # Only remove auto-generated thumbnails after successful upload, and not user-set ones
+        try:
+            if thumb_path and os.path.exists(thumb_path) and thumb_path != f'{sender}.jpg':
+                await asyncio.sleep(2)  # Delay cleanup to ensure thumbnail is used before deletion
+                os.remove(thumb_path)
+        except Exception as e:
+            print(f"Error removing thumbnail: {e}")
         gc.collect()
 
 
