@@ -39,8 +39,9 @@ batch_mode = {}
 
 async def process_and_upload_link(userbot, user_id, msg_id, link, retry_count, message):
     try:
+        # Reduced sleep time from 15 to 5 seconds
         await get_msg(userbot, user_id, msg_id, link, retry_count, message)
-        await asyncio.sleep(15)
+        await asyncio.sleep(5)
     finally:
         pass
 
@@ -274,6 +275,20 @@ async def batch_link(_, message):
                         reply_markup=keyboard
                     )
 
+        # Process links concurrently in smaller chunks
+        chunk_size = 5  # Process 5 links at a time
+        for chunk_start in range(cs, cs + cl, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, cs + cl)
+            tasks = [process_single_link(i) for i in range(chunk_start, chunk_end)]
+            completed = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Update progress
+            successful = len([x for x in completed if isinstance(x, int)])
+            await pin_msg.edit_text(
+                f"Batch process started ⚡\nProcessing: {successful}/{cl}\n\n**__Powered by Shimperd__**",
+                reply_markup=keyboard
+            )
+
         await set_interval(user_id, interval_minutes=300)
         await pin_msg.edit_text(
             f"Batch completed successfully for {cl} messages 🎉\n\n**__Powered by Shimperd__**",
@@ -285,6 +300,8 @@ async def batch_link(_, message):
         await app.send_message(message.chat.id, f"Error: {e}")
     finally:
         users_loop.pop(user_id, None)
+        if userbot:
+            await userbot.stop()
 
 @app.on_message(filters.command("cancel"))
 async def stop_batch(_, message):
