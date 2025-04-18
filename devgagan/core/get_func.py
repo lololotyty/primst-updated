@@ -1096,6 +1096,30 @@ def dl_progress_callback(done, total, user_id):
 
 # split function .... ?( to handle gareeb bot coder jo string n lga paaye)
 
+def split_progress_callback(current, total, part_number, total_parts):
+    """Progress callback function specifically for file splitting operations."""
+    percent = (current / total) * 100
+    
+    # Format the progress bar
+    completed_blocks = int(percent // 10)
+    remaining_blocks = 10 - completed_blocks
+    progress_bar = "♦" * completed_blocks + "◇" * remaining_blocks
+    
+    # Format the final output
+    final = (
+        f"╭──────────────────╮\n"
+        f"│     **__File Splitting Progress__**       \n"
+        f"├──────────\n"
+        f"│ {progress_bar}\n\n"
+        f"│ **__Overall:__** Part {part_number}/{total_parts}\n"
+        f"│ **__Current Part:__** {percent:.2f}%\n"
+        f"│ **__Done:__** {current / (1024 * 1024):.2f} MB / {total / (1024 * 1024):.2f} MB\n"
+        f"╰──────────────────╯\n\n"
+        f"**__Please wait while the file is being prepared__**"
+    )
+    
+    return final
+
 async def split_and_upload_file(app, sender, target_chat_id, file_path, caption, topic_id):
     if not os.path.exists(file_path):
         await app.send_message(sender, "❌ File not found!")
@@ -1103,37 +1127,107 @@ async def split_and_upload_file(app, sender, target_chat_id, file_path, caption,
 
     file_size = os.path.getsize(file_path)
     # Set part size to 1.9 GB to ensure it stays under Telegram's 2GB limit
-    PART_SIZE = 1.9 * 1024 * 1024 * 1024  # 1.9 GB in bytes
+    PART_SIZE = int(1.9 * 1024 * 1024 * 1024)  # 1.9 GB in bytes, converted to integer
     total_parts = math.ceil(file_size / PART_SIZE)
     
-    start = await app.send_message(sender, f"ℹ️ File size: {file_size / (1024 * 1024 * 1024):.2f} GB\nSplitting into {total_parts} parts of 1.9GB each")
+    # Send initial notification message with detailed info
+    start = await app.send_message(
+        sender, 
+        f"⚙️ **File Processing Started**\n\n"
+        f"• **File Size:** {file_size / (1024 * 1024 * 1024):.2f} GB\n"
+        f"• **Parts:** {total_parts} (max 1.9GB each)\n"
+        f"• **Status:** Preparing to split file..."
+    )
     
     part_number = 0
-    async with aiofiles.open(file_path, mode="rb") as f:
-        while True:
-            chunk = await f.read(PART_SIZE)
-            if not chunk:
-                break
+    try:
+        async with aiofiles.open(file_path, mode="rb") as f:
+            while True:
+                # Show splitting progress
+                if part_number > 0:
+                    await start.edit_text(
+                        f"⚙️ **File Processing**\n\n"
+                        f"• **File Size:** {file_size / (1024 * 1024 * 1024):.2f} GB\n"
+                        f"• **Parts:** {total_parts} (max 1.9GB each)\n"
+                        f"• **Status:** Splitting in progress...\n"
+                        f"• **Progress:** {part_number}/{total_parts} parts processed"
+                    )
+                
+                # Read chunk with exact size
+                chunk = await f.read(PART_SIZE)
+                if not chunk:
+                    break
 
-            # Create part filename
-            base_name, file_ext = os.path.splitext(file_path)
-            part_file = f"{base_name}.part{str(part_number + 1).zfill(3)}{file_ext}"
+                # Create part filename
+                base_name, file_ext = os.path.splitext(file_path)
+                part_file = f"{base_name}.part{str(part_number + 1).zfill(3)}{file_ext}"
 
-            # Write part to file
-            async with aiofiles.open(part_file, mode="wb") as part_f:
-                await part_f.write(chunk)
+                # Write part to file with progress updates
+                # (We're creating each chunk file before uploading)
+                chunk_size = len(chunk)
+                progress_update = await app.send_message(sender, f"📦 Preparing part {part_number + 1}/{total_parts}...")
+                
+                async with aiofiles.open(part_file, mode="wb") as part_f:
+                    await part_f.write(chunk)
+                
+                await progress_update.delete()
 
-            # Uploading part
-            edit = await app.send_message(target_chat_id, f"⬆️ Uploading part {part_number + 1}/{total_parts}...")
-            part_caption = f"{caption}\n\n**Part {part_number + 1}/{total_parts}**"
-            await app.send_document(target_chat_id, document=part_file, caption=part_caption, reply_to_message_id=topic_id,
-                progress=progress_bar,
-                progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
+                # Uploading part
+                edit = await app.send_message(
+                    target_chat_id, 
+                    f"⬆️ **Uploading Part {part_number + 1}/{total_parts}**\n"
+                    f"Progress: Starting upload..."
+                )
+                
+                part_caption = f"{caption}\n\n**Part {part_number + 1}/{total_parts}**"
+                
+                try:
+                    # Make sure all progress arguments are properly typed
+                    await app.send_document(
+                        chat_id=target_chat_id,
+                        document=part_file,
+                        caption=part_caption,
+                        reply_to_message_id=topic_id,
+                        progress=progress_bar,
+                        progress_args=(
+                            f"╭─────────────────────╮\n│ **__Part {part_number + 1}/{total_parts} Upload__**\n├─────────────────────", 
+                            edit, 
+                            int(time.time())
+                        )
+                    )
+                except Exception as e:
+                    error_msg = f"Error uploading part {part_number + 1}: {str(e)}"
+                    await app.send_message(sender, error_msg)
+                    raise Exception(error_msg)
+                
+                await edit.delete()
+                os.remove(part_file)  # Cleanup after upload
+
+                part_number += 1
+
+        # All parts uploaded successfully
+        await start.edit_text(
+            f"✅ **File Upload Complete**\n\n"
+            f"• **File Size:** {file_size / (1024 * 1024 * 1024):.2f} GB\n"
+            f"• **Parts:** {total_parts}\n"
+            f"• **Status:** All parts uploaded successfully!"
+        )
+        
+    except Exception as e:
+        await app.send_message(sender, f"❌ Error during file split/upload: {str(e)}")
+        if os.path.exists(file_path):
+            await start.edit_text(
+                f"🚫 **Process Failed**\n\n"
+                f"• **Error:** {str(e)}\n"
+                f"• **Resolution:** Please try again or contact support"
             )
-            await edit.delete()
-            os.remove(part_file)  # Cleanup after upload
-
-            part_number += 1
-
-    await start.delete()
-    os.remove(file_path)
+        return
+    finally:
+        # Ensure cleanup happens in all cases
+        try:
+            await asyncio.sleep(5)
+            await start.delete()
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except:
+            pass
