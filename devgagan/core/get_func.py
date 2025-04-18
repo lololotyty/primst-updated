@@ -1128,6 +1128,7 @@ async def split_and_upload_file(app, sender, target_chat_id, file_path, caption,
     file_size = os.path.getsize(file_path)
     # Set part size to 1.9 GB to ensure it stays under Telegram's 2GB limit
     PART_SIZE = int(1.9 * 1024 * 1024 * 1024)  # 1.9 GB in bytes, converted to integer
+    BUFFER_SIZE = 8 * 1024 * 1024  # 8MB buffer for reading/writing to reduce memory usage
     total_parts = math.ceil(file_size / PART_SIZE)
     
     # Send initial notification message with detailed info
@@ -1141,8 +1142,10 @@ async def split_and_upload_file(app, sender, target_chat_id, file_path, caption,
     
     part_number = 0
     try:
-        async with aiofiles.open(file_path, mode="rb") as f:
-            while True:
+        file_handle = await aiofiles.open(file_path, mode="rb")
+        try:
+            bytes_read_total = 0
+            while bytes_read_total < file_size:
                 # Show splitting progress
                 if part_number > 0:
                     await start.edit_text(
@@ -1152,25 +1155,50 @@ async def split_and_upload_file(app, sender, target_chat_id, file_path, caption,
                         f"• **Status:** Splitting in progress...\n"
                         f"• **Progress:** {part_number}/{total_parts} parts processed"
                     )
+                    # Force garbage collection after each part to reduce memory usage
+                    gc.collect()
                 
-                # Read chunk with exact size
-                chunk = await f.read(PART_SIZE)
-                if not chunk:
-                    break
-
                 # Create part filename
                 base_name, file_ext = os.path.splitext(file_path)
                 part_file = f"{base_name}.part{str(part_number + 1).zfill(3)}{file_ext}"
 
-                # Write part to file with progress updates
-                # (We're creating each chunk file before uploading)
-                chunk_size = len(chunk)
+                # Prepare progress message
                 progress_update = await app.send_message(sender, f"📦 Preparing part {part_number + 1}/{total_parts}...")
                 
-                async with aiofiles.open(part_file, mode="wb") as part_f:
-                    await part_f.write(chunk)
-                
+                # Stream data in smaller chunks to part file
+                bytes_written = 0
+                part_file_handle = await aiofiles.open(part_file, mode="wb")
+                try:
+                    while bytes_written < PART_SIZE:
+                        # Read a small buffer to avoid memory issues
+                        chunk = await file_handle.read(min(BUFFER_SIZE, PART_SIZE - bytes_written))
+                        if not chunk:
+                            break
+                            
+                        # Update progress occasionally 
+                        if bytes_written % (100 * 1024 * 1024) == 0:  # Every 100MB
+                            percent = (bytes_written / PART_SIZE) * 100
+                            await progress_update.edit_text(
+                                f"📦 Preparing part {part_number + 1}/{total_parts}...\n"
+                                f"Progress: {percent:.1f}% ({bytes_written / (1024 * 1024):.1f}MB)"
+                            )
+                            
+                        await part_file_handle.write(chunk)
+                        bytes_written += len(chunk)
+                        bytes_read_total += len(chunk)
+                        
+                        # Break if we've reached the end of the file
+                        if len(chunk) < BUFFER_SIZE:
+                            break
+                finally:
+                    await part_file_handle.close()
+                    
+                # Delete progress message to clean up chat
                 await progress_update.delete()
+
+                # Skip empty parts (should only happen for the last part if it's empty)
+                if bytes_written == 0:
+                    break
 
                 # Uploading part
                 edit = await app.send_message(
@@ -1199,12 +1227,18 @@ async def split_and_upload_file(app, sender, target_chat_id, file_path, caption,
                     error_msg = f"Error uploading part {part_number + 1}: {str(e)}"
                     await app.send_message(sender, error_msg)
                     raise Exception(error_msg)
-                
-                await edit.delete()
-                os.remove(part_file)  # Cleanup after upload
+                finally:
+                    # Clean up resources immediately after each part
+                    if os.path.exists(part_file):
+                        os.remove(part_file)
+                    await edit.delete()
+                    # Force garbage collection after each part
+                    gc.collect()
 
                 part_number += 1
-
+        finally:
+            await file_handle.close()
+            
         # All parts uploaded successfully
         await start.edit_text(
             f"✅ **File Upload Complete**\n\n"
@@ -1221,13 +1255,18 @@ async def split_and_upload_file(app, sender, target_chat_id, file_path, caption,
                 f"• **Error:** {str(e)}\n"
                 f"• **Resolution:** Please try again or contact support"
             )
-        return
     finally:
         # Ensure cleanup happens in all cases
         try:
-            await asyncio.sleep(5)
-            await start.delete()
+            # Clean up the original file
             if os.path.exists(file_path):
                 os.remove(file_path)
-        except:
-            pass
+                
+            # Keep the success message for a bit longer then delete
+            await asyncio.sleep(5)
+            await start.delete()
+            
+            # Force another garbage collection
+            gc.collect()
+        except Exception as cleanup_error:
+            print(f"Cleanup error: {str(cleanup_error)}")
