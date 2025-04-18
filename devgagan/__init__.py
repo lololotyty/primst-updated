@@ -20,6 +20,7 @@ from config import API_ID, API_HASH, BOT_TOKEN, STRING, MONGO_DB
 from telethon.sync import TelegramClient
 from motor.motor_asyncio import AsyncIOMotorClient
 import time
+from telethon.errors import FloodWaitError
 
 loop = asyncio.get_event_loop()
 
@@ -39,10 +40,73 @@ app = Client(
     parse_mode=ParseMode.MARKDOWN
 )
 
-pro = Client("ggbot", api_id=API_ID, api_hash=API_HASH, session_string=STRING)
+# Initialize Telethon client with FloodWait error handling
+async def initialize_telethon():
+    max_retries = 5
+    retry_count = 0
+    wait_base = 30  # Initial wait period in seconds
+    
+    while retry_count < max_retries:
+        try:
+            client = TelegramClient('sexrepo', API_ID, API_HASH)
+            await client.start(bot_token=BOT_TOKEN)
+            logger.info("Successfully initialized Telethon client")
+            return client
+        except FloodWaitError as e:
+            wait_time = e.seconds
+            retry_count += 1
+            logger.warning(f"FloodWaitError: Need to wait {wait_time} seconds. Retry {retry_count}/{max_retries}")
+            
+            # If this is the last retry, notify about the issue
+            if retry_count >= max_retries:
+                logger.error(f"Max retries reached for Telethon initialization. Last error: {e}")
+                # Continue with a longer wait rather than giving up
+                logger.info(f"Trying one last time with extended wait...")
+                
+            # Wait the required time plus a small buffer
+            await asyncio.sleep(wait_time + 5)
+        except Exception as e:
+            logger.error(f"Error initializing Telethon client: {e}")
+            # Add a delay before retrying
+            retry_count += 1
+            wait_time = wait_base * (2 ** retry_count)  # Exponential backoff
+            logger.info(f"Retrying in {wait_time} seconds... ({retry_count}/{max_retries})")
+            await asyncio.sleep(wait_time)
+    
+    # If all retries failed, try one last time with a different session name
+    try:
+        logger.info("Trying with a new session as last resort...")
+        client = TelegramClient(f'sexrepo_backup_{int(time.time())}', API_ID, API_HASH)
+        await client.start(bot_token=BOT_TOKEN)
+        logger.info("Successfully initialized Telethon client with backup session")
+        return client
+    except Exception as e:
+        logger.critical(f"Failed to initialize Telethon client after all retries: {e}")
+        raise
 
-sex = TelegramClient('sexrepo', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+# Run in the event loop to handle async initialization
+try:
+    sex = loop.run_until_complete(initialize_telethon())
+except Exception as e:
+    logger.critical(f"Fatal error initializing the Telethon client: {e}")
+    # Fallback - continue without Telethon but log the issue
+    sex = None 
+    logger.warning("Continuing without Telethon client - some functionality will be limited")
 
+# Handle session for premium users (if STRING is provided)
+pro = None  # Default value
+try:
+    if STRING:
+        pro = Client(
+            "gaganPro", 
+            api_id=API_ID,
+            api_hash=API_HASH,
+            session_string=STRING,
+            in_memory=True
+        )
+except Exception as e:
+    logger.error(f"Error initializing pro client: {e}")
+    pro = None
 
 # MongoDB setup
 tclient = AsyncIOMotorClient(MONGO_DB)
