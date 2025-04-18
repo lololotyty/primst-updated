@@ -22,12 +22,14 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import time
 from telethon.errors import FloodWaitError
 
-loop = asyncio.get_event_loop()
-
+# Set up logging
 logging.basicConfig(
     format="[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s",
     level=logging.INFO,
 )
+logger = logging.getLogger(__name__)
+
+loop = asyncio.get_event_loop()
 
 botStartTime = time.time()
 
