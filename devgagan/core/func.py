@@ -20,6 +20,7 @@ from devgagan.core.mongo.plans_db import premium_users
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 import cv2
 from pyrogram.errors import FloodWait, InviteHashInvalid, InviteHashExpired, UserAlreadyParticipant, UserNotParticipant
+from pyrogram.errors.exceptions.bad_request_400 import UsernameNotOccupied
 from datetime import datetime as dt
 import asyncio, subprocess, re, os, time
 async def chk_user(message, user_id):
@@ -164,7 +165,7 @@ async def userbot_join(userbot, invite_link):
         print(e)
         return "Could not join, try joining manually."
 def get_link(string):
-    regex = r"(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'\".,<>?«»“”‘’]))"
+    regex = r"(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'\".,<>?«»""'']))"
     url = re.findall(regex,string)   
     try:
         link = [x[0] for x in url][0]
@@ -287,3 +288,28 @@ async def prog_bar(current, total, ud_type, message, start):
 
         except:
             pass
+
+async def resolve_username(client, username):
+    """
+    Safely resolve a username to chat_id with proper error handling
+    
+    Args:
+        client: Pyrogram client
+        username: Username to resolve (with or without @)
+        
+    Returns:
+        tuple: (success, chat_id or error_message)
+    """
+    try:
+        # Make sure username doesn't have @ prefix for the API call
+        if username.startswith('@'):
+            username = username[1:]
+            
+        chat = await client.get_chat(f"@{username}")
+        return True, chat.id
+    except UsernameNotOccupied:
+        return False, f"The username '@{username}' is not occupied. The channel or group may have been deleted or renamed."
+    except FloodWait as e:
+        return False, f"Too many requests. Please try again after {e.x} seconds."
+    except Exception as e:
+        return False, f"Error resolving username: {str(e)}"
