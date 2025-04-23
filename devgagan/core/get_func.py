@@ -445,8 +445,17 @@ async def copy_message_with_chat_id(app, userbot, sender, chat_id, message_id, e
 
         # Fallback if result is None
         if result is None:
-            await edit.edit("Trying if it is a group...")
-            chat_id = (await userbot.get_chat(f"@{chat_id}")).id
+            await edit.edit("Resolving username...")
+            
+            # Use the new resolve_username function
+            success, response = await resolve_username(userbot, chat_id)
+            if not success:
+                await edit.edit(response)
+                return
+                
+            chat_id = response
+            await edit.edit("Successfully resolved username. Downloading media...")
+            
             msg = await userbot.get_messages(chat_id, message_id)
 
             if not msg or msg.service or msg.empty:
