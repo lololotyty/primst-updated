@@ -425,6 +425,11 @@ async def copy_message_with_chat_id(app, userbot, sender, chat_id, message_id, e
     size_limit = 2 * 1024 * 1024 * 1024  # 2 GB size limit
 
     try:
+        # Check if userbot is available
+        if not userbot:
+            await edit.edit("❌ You need to login first. Use /login command to authenticate.")
+            return
+
         # First try to get message directly
         try:
             msg = await app.get_messages(chat_id, message_id)
@@ -1306,3 +1311,22 @@ async def resolve_username(userbot, username):
             
     except Exception as e:
         return False, f"Error in username resolution: {str(e)}"
+
+async def process_and_upload_link(userbot, user_id, edit_id, link, i, message):
+    try:
+        # Check if userbot is available for special links
+        if any(x in link for x in ['t.me/b/', 't.me/c/', '/s/', 'tg://openmessage']) and not userbot:
+            await app.edit_message_text(
+                message.chat.id, edit_id,
+                "❌ You need to login first to access this content. Use /login command to authenticate."
+            )
+            return
+
+        # Process the link
+        await get_msg(userbot, message.chat.id, edit_id, link, i, message)
+    except Exception as e:
+        print(f"Error in process_and_upload_link: {e}")
+        await app.edit_message_text(
+            message.chat.id, edit_id,
+            f"Error processing link: {str(e)}"
+        )
