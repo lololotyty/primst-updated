@@ -425,7 +425,27 @@ async def copy_message_with_chat_id(app, userbot, sender, chat_id, message_id, e
     size_limit = 2 * 1024 * 1024 * 1024  # 2 GB size limit
 
     try:
-        msg = await app.get_messages(chat_id, message_id)
+        # First try to get message directly
+        try:
+            msg = await app.get_messages(chat_id, message_id)
+        except Exception as e:
+            # If direct message fetch fails, try resolving username
+            await edit.edit("Resolving username...")
+            success, response = await resolve_username(userbot, chat_id)
+            if not success:
+                await edit.edit(f"Error: {response}")
+                return
+            chat_id = response
+            try:
+                msg = await userbot.get_messages(chat_id, message_id)
+            except Exception as e:
+                await edit.edit(f"Failed to get message: {str(e)}")
+                return
+
+        if not msg or msg.service or msg.empty:
+            await edit.edit("Message not found or is empty")
+            return
+
         custom_caption = get_user_caption_preference(sender)
         final_caption = format_caption(msg.caption or '', sender, custom_caption)
 
@@ -437,66 +457,53 @@ async def copy_message_with_chat_id(app, userbot, sender, chat_id, message_id, e
         # Handle different media types
         if msg.media:
             result = await send_media_message(app, target_chat_id, msg, final_caption, topic_id)
-            return
+            if result:
+                return
         elif msg.text:
             result = await app.copy_message(target_chat_id, chat_id, message_id, reply_to_message_id=topic_id)
+            if result:
+                return
+
+        # If we reach here, we need to download and re-upload
+        await edit.edit("Downloading media...")
+        
+        file = await userbot.download_media(
+            msg,
+            progress=progress_bar,
+            progress_args=("╭─────────────────────╮\n│      **__Downloading__...**\n├─────────────────────", edit, time.time())
+        )
+        
+        if not file:
+            await edit.edit("Failed to download media")
             return
-
-        # Fallback if result is None
-        if result is None:
-            await edit.edit("Resolving username...")
             
-            # Use the new resolve_username function
-            success, response = await resolve_username(userbot, chat_id)
-            if not success:
-                await edit.edit(response)
+        file = await rename_file(file, sender)
+
+        if msg.photo:
+            result = await app.send_photo(target_chat_id, file, caption=final_caption, reply_to_message_id=topic_id)
+        elif msg.video or msg.document:
+            file_size = get_message_file_size(msg)
+            freecheck = await chk_user(chat_id, sender)
+            if file_size > size_limit and (freecheck == 1 or pro is None):
+                await edit.delete()
+                await split_and_upload_file(app, sender, target_chat_id, file, final_caption, topic_id)
+                return       
+            elif file_size > size_limit:
+                await handle_large_file(file, sender, edit, final_caption)
                 return
-                
-            chat_id = response
-            await edit.edit("Successfully resolved username. Downloading media...")
-            
-            msg = await userbot.get_messages(chat_id, message_id)
-
-            if not msg or msg.service or msg.empty:
-                return
-
-            final_caption = format_caption(msg.caption.markdown if msg.caption else "", sender, custom_caption)
-            file = await userbot.download_media(
-                msg,
-                progress=progress_bar,
-                progress_args=("╭─────────────────────╮\n│      **__Downloading__...**\n├─────────────────────", edit, time.time())
-            )
-            file = await rename_file(file, sender)
-
-            if msg.photo:
-                result = await app.send_photo(target_chat_id, file, caption=final_caption, reply_to_message_id=topic_id)
-            elif msg.video or msg.document:
-                # Get file size
-                file_size = get_message_file_size(msg)
-                freecheck = await chk_user(chat_id, sender)
-                if file_size > size_limit and (freecheck == 1 or pro is None):
-                    await edit.delete()
-                    await split_and_upload_file(app, sender, target_chat_id, file, final_caption, topic_id)
-                    return       
-                elif file_size > size_limit:
-                    await handle_large_file(file, sender, edit, final_caption)
-                    return
-                await upload_media(sender, target_chat_id, file, final_caption, edit, topic_id)
-            elif msg.audio:
-                result = await app.send_audio(target_chat_id, file, caption=final_caption, reply_to_message_id=topic_id)
-            elif msg.voice:
-                result = await app.send_voice(target_chat_id, file, reply_to_message_id=topic_id)
-            elif msg.sticker:
-                result = await app.send_sticker(target_chat_id, msg.sticker.file_id, reply_to_message_id=topic_id)
-            else:
-                await edit.edit("Unsupported media type.")
+            await upload_media(sender, target_chat_id, file, final_caption, edit, topic_id)
+        elif msg.audio:
+            result = await app.send_audio(target_chat_id, file, caption=final_caption, reply_to_message_id=topic_id)
+        elif msg.voice:
+            result = await app.send_voice(target_chat_id, file, reply_to_message_id=topic_id)
+        elif msg.sticker:
+            result = await app.send_sticker(target_chat_id, msg.sticker.file_id, reply_to_message_id=topic_id)
+        else:
+            await edit.edit("Unsupported media type")
 
     except Exception as e:
         print(f"Error : {e}")
-        pass
-        #error_message = f"Error occurred while processing message: {str(e)}"
-        # await app.send_message(sender, error_message)
-        # await app.send_message(sender, f" Baka Make Bot admin in your Channel - {target_chat_id} and restart the process after /cancel")
+        await edit.edit(f"Error occurred: {str(e)}")
 
     finally:
         if file and os.path.exists(file):
@@ -1278,3 +1285,24 @@ async def split_and_upload_file(app, sender, target_chat_id, file_path, caption,
             gc.collect()
         except Exception as cleanup_error:
             print(f"Cleanup error: {str(cleanup_error)}")
+
+async def resolve_username(userbot, username):
+    try:
+        # Remove @ if present
+        username = username.replace('@', '')
+        
+        # Check if it's a channel/group ID
+        if username.startswith('-100'):
+            return True, int(username)
+            
+        # Try to resolve the username
+        try:
+            entity = await userbot.get_entity(username)
+            return True, entity.id
+        except ValueError:
+            return False, "Invalid username or channel ID"
+        except Exception as e:
+            return False, f"Error resolving username: {str(e)}"
+            
+    except Exception as e:
+        return False, f"Error in username resolution: {str(e)}"
