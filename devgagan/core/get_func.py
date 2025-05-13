@@ -242,8 +242,37 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             edit = await app.edit_message_text(sender, edit_id, "Public link detected...")
             chat = msg_link.split("t.me/")[1].split("/")[0]
             msg_id = int(msg_link.split("/")[-1])
-            await copy_message_with_chat_id(app, userbot, sender, chat, msg_id, edit)
-            await edit.delete(2)
+            try:
+                # Try to copy the message directly first
+                result = await app.copy_message(sender, chat, msg_id)
+                if result:
+                    await result.copy(LOG_GROUP)
+                    await edit.delete(2)
+                    return
+            except Exception as e:
+                print(f"Error copying message: {e}")
+                # If direct copy fails, try getting the message and sending it
+                try:
+                    msg = await app.get_messages(chat, msg_id)
+                    if not msg or msg.service or msg.empty:
+                        await edit.edit("Message not found or is empty")
+                        return
+                        
+                    if msg.media:
+                        result = await send_media_message(app, sender, msg, msg.caption.markdown if msg.caption else None, None)
+                        if result:
+                            await result.copy(LOG_GROUP)
+                            await edit.delete(2)
+                            return
+                    elif msg.text:
+                        result = await app.send_message(sender, msg.text.markdown)
+                        if result:
+                            await result.copy(LOG_GROUP)
+                            await edit.delete(2)
+                            return
+                except Exception as e:
+                    print(f"Error sending message: {e}")
+                    await edit.edit(f"Error occurred: {str(e)}")
             return
             
         # Fetch the target message
