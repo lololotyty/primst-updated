@@ -606,30 +606,46 @@ async def copy_message_with_chat_id(app, userbot, sender, chat_id, message_id, e
 async def send_media_message(app, target_chat_id, msg, caption, topic_id):
     try:
         if msg.video:
-            return await app.send_video(target_chat_id, msg.video.file_id, caption=caption, reply_to_message_id=topic_id)
+            if msg.video.file_id:
+                return await app.send_video(
+                    target_chat_id, 
+                    msg.video.file_id, 
+                    caption=caption, 
+                    reply_to_message_id=topic_id,
+                    width=msg.video.width,
+                    height=msg.video.height,
+                    duration=msg.video.duration
+                )
         if msg.document:
-            return await app.send_document(target_chat_id, msg.document.file_id, caption=caption, reply_to_message_id=topic_id)
+            if msg.document.file_id:
+                return await app.send_document(
+                    target_chat_id, 
+                    msg.document.file_id, 
+                    caption=caption, 
+                    reply_to_message_id=topic_id
+                )
         if msg.photo:
-            return await app.send_photo(target_chat_id, msg.photo.file_id, caption=caption, reply_to_message_id=topic_id)
+            if msg.photo.file_id:
+                return await app.send_photo(
+                    target_chat_id, 
+                    msg.photo.file_id, 
+                    caption=caption, 
+                    reply_to_message_id=topic_id
+                )
     except Exception as e:
         print(f"Error while sending media: {e}")
+        # If sending media by file_id fails, fallback to copy_message
+        try:
+            return await app.copy_message(
+                target_chat_id, 
+                msg.chat.id, 
+                msg.id, 
+                reply_to_message_id=topic_id
+            )
+        except Exception as copy_error:
+            print(f"Error during copy_message fallback: {copy_error}")
     
-    # Fallback to copy_message in case of any exceptions
-    return await app.copy_message(target_chat_id, msg.chat.id, msg.id, reply_to_message_id=topic_id)
-    
-
-def format_caption(original_caption, sender, custom_caption):
-    delete_words = load_delete_words(sender)
-    replacements = load_replacement_words(sender)
-
-    # Remove and replace words in the caption
-    for word in delete_words:
-        original_caption = original_caption.replace(word, '  ')
-    for word, replace_word in replacements.items():
-        original_caption = original_caption.replace(word, replace_word)
-
-    # Append custom caption if available
-    return f"{original_caption}\n\n__**{custom_caption}**__" if custom_caption else original_caption
+    return None
 
     
 # ------------------------ Button Mode Editz FOR SETTINGS ----------------------------
@@ -1113,6 +1129,8 @@ async def sanitize(file_name: str) -> str:
     sanitized_name = re.sub(r'[\\/:"*?<>|]', '_', file_name)
     # Strip leading/trailing whitespaces and remove _app_downloads again
     sanitized_name = sanitized_name.strip().replace("_app_downloads", "")
+    # Remove any leading underscores
+    sanitized_name = sanitized_name.lstrip('_')
     return sanitized_name
     
 async def is_file_size_exceeding(file_path, size_limit):
