@@ -285,8 +285,40 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
                                     file = await rename_file(file, sender)
                                     print(f"File renamed to: {file}")
                                     
-                                    if msg.document:
-                                        print(f"Document detected - Mime type: {msg.document.mime_type}")
+                                    # Upload based on media type
+                                    if file.lower().endswith(('.mp4', '.mkv', '.avi')):
+                                        print("Sending as video")
+                                        # Get video metadata
+                                        metadata = video_metadata(file)
+                                        width, height, duration = metadata['width'], metadata['height'], metadata['duration']
+                                        thumb_path = await screenshot(file, duration, sender)
+                                        
+                                        result = await app.send_video(
+                                            sender, 
+                                            file, 
+                                            thumb=thumb_path,
+                                            width=width,
+                                            height=height,
+                                            duration=duration,
+                                            caption=msg.caption.markdown if msg.caption else None,
+                                            progress=progress_bar,
+                                            progress_args=("╭─────────────────────╮\n│      **__Uploading Video__**\n├─────────────────────", edit, time.time())
+                                        )
+                                        
+                                        # Clean up thumbnail if created
+                                        if thumb_path and os.path.exists(thumb_path) and thumb_path != f'{sender}.jpg':
+                                            os.remove(thumb_path)
+                                    elif file.lower().endswith(('.jpg', '.jpeg', '.png')):
+                                        print("Sending as photo")
+                                        result = await app.send_photo(
+                                            sender, 
+                                            file, 
+                                            caption=msg.caption.markdown if msg.caption else None,
+                                            progress=progress_bar,
+                                            progress_args=("╭─────────────────────╮\n│      **__Uploading Photo__**\n├─────────────────────", edit, time.time())
+                                        )
+                                    else:
+                                        print("Sending as document")
                                         result = await app.send_document(
                                             sender, 
                                             file, 
@@ -294,9 +326,6 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
                                             progress=progress_bar,
                                             progress_args=("╭─────────────────────╮\n│      **__Uploading Document__**\n├─────────────────────", edit, time.time())
                                         )
-                                    else:
-                                        print("Using send_media_message for other media types")
-                                        result = await send_media_message(app, sender, msg, msg.caption.markdown if msg.caption else None, None)
                                     
                                     if result:
                                         print("Media uploaded successfully")
