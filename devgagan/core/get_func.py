@@ -1035,8 +1035,16 @@ async def rename_file(file, sender):
         print(f"Custom rename tag: {custom_rename_tag}")
         print(f"Replacements: {replacements}")
         
-        # Remove _app_downloads prefix if it exists
-        file = str(file).replace("_app_downloads", "")
+        # Get the directory and filename separately
+        directory = os.path.dirname(str(file))
+        filename = os.path.basename(str(file))
+        
+        # Remove _app_downloads prefix from both directory and filename
+        directory = directory.replace("_app_downloads", "")
+        filename = filename.replace("_app_downloads", "")
+        
+        # Reconstruct the file path without _app_downloads
+        file = os.path.join(directory, filename) if directory else filename
         
         last_dot_index = str(file).rfind('.')
         
@@ -1077,9 +1085,16 @@ async def rename_file(file, sender):
         new_file_name = f"{original_file_name} {custom_rename_tag}.{file_extension}"
         print(f"Final new filename: {new_file_name}")
         
-        await asyncio.to_thread(os.rename, file, new_file_name)
-        print(f"File renamed successfully to: {new_file_name}")
-        return new_file_name
+        # Get the original file path to rename
+        original_file_path = str(file)
+        if directory:
+            new_file_path = os.path.join(directory, new_file_name)
+        else:
+            new_file_path = new_file_name
+            
+        await asyncio.to_thread(os.rename, original_file_path, new_file_path)
+        print(f"File renamed successfully to: {new_file_path}")
+        return new_file_path
     except Exception as e:
         print(f"Error in rename_file: {e}")
         return file  # Return original file if rename fails
