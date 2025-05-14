@@ -243,36 +243,50 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             chat = msg_link.split("t.me/")[1].split("/")[0]
             msg_id = int(msg_link.split("/")[-1])
             try:
-                # Try to copy the message directly first
-                result = await app.copy_message(sender, chat, msg_id)
-                if result:
-                    await result.copy(LOG_GROUP)
-                    await edit.delete(2)
+                # First get the message to check if it exists and has media
+                msg = await app.get_messages(chat, msg_id)
+                if not msg or msg.empty:
+                    await edit.edit("Message not found or is empty")
                     return
-            except Exception as e:
-                print(f"Error copying message: {e}")
-                # If direct copy fails, try getting the message and sending it
-                try:
-                    msg = await app.get_messages(chat, msg_id)
-                    if not msg or msg.service or msg.empty:
-                        await edit.edit("Message not found or is empty")
+                    
+                if msg.media:
+                    # For media messages (including PDFs), try to copy first
+                    try:
+                        result = await app.copy_message(sender, chat, msg_id)
+                        if result:
+                            await result.copy(LOG_GROUP)
+                            await edit.delete(2)
+                            return
+                    except Exception as e:
+                        print(f"Error copying message: {e}")
+                        # If copy fails, try downloading and uploading
+                        try:
+                            file = await app.download_media(msg)
+                            if file:
+                                if msg.document and msg.document.mime_type == "application/pdf":
+                                    result = await app.send_document(sender, file, caption=msg.caption.markdown if msg.caption else None)
+                                else:
+                                    result = await send_media_message(app, sender, msg, msg.caption.markdown if msg.caption else None, None)
+                                if result:
+                                    await result.copy(LOG_GROUP)
+                                    await edit.delete(2)
+                                if os.path.exists(file):
+                                    os.remove(file)
+                                return
+                        except Exception as e:
+                            print(f"Error downloading/uploading media: {e}")
+                            await edit.edit(f"Error occurred: {str(e)}")
+                elif msg.text:
+                    result = await app.send_message(sender, msg.text.markdown)
+                    if result:
+                        await result.copy(LOG_GROUP)
+                        await edit.delete(2)
                         return
-                        
-                    if msg.media:
-                        result = await send_media_message(app, sender, msg, msg.caption.markdown if msg.caption else None, None)
-                        if result:
-                            await result.copy(LOG_GROUP)
-                            await edit.delete(2)
-                            return
-                    elif msg.text:
-                        result = await app.send_message(sender, msg.text.markdown)
-                        if result:
-                            await result.copy(LOG_GROUP)
-                            await edit.delete(2)
-                            return
-                except Exception as e:
-                    print(f"Error sending message: {e}")
-                    await edit.edit(f"Error occurred: {str(e)}")
+                else:
+                    await edit.edit("No media or text found in the message")
+            except Exception as e:
+                print(f"Error getting message: {e}")
+                await edit.edit(f"Error occurred: {str(e)}")
             return
             
         # Fetch the target message
