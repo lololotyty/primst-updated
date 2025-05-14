@@ -1101,6 +1101,9 @@ async def rename_file(file, sender):
 
 
 async def sanitize(file_name: str) -> str:
+    # First remove _app_downloads prefix if it exists
+    file_name = file_name.replace("_app_downloads", "")
+    # Then sanitize invalid characters
     sanitized_name = re.sub(r'[\\/:"*?<>|]', '_', file_name)
     # Strip leading/trailing whitespaces
     return sanitized_name.strip()
