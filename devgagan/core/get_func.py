@@ -281,9 +281,14 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
                                 print(f"Media downloaded to: {file}")
                                 try:
                                     # Apply rename function to the downloaded file
-                                    print("Applying rename function...")
-                                    file = await rename_file(file, sender)
-                                    print(f"File renamed to: {file}")
+                                    print("Checking if rename needed...")
+                                    # Only apply rename for PDF files, not for videos or audio
+                                    if file.lower().endswith('.pdf'):
+                                        print("PDF detected - applying rename function")
+                                        file = await rename_file(file, sender)
+                                        print(f"File renamed to: {file}")
+                                    else:
+                                        print(f"Not a PDF - keeping original filename: {file}")
                                     
                                     # Upload based on media type
                                     if file.lower().endswith(('.mp4', '.mkv', '.avi')):
