@@ -280,6 +280,11 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
                             if file:
                                 print(f"Media downloaded to: {file}")
                                 try:
+                                    # Apply rename function to the downloaded file
+                                    print("Applying rename function...")
+                                    file = await rename_file(file, sender)
+                                    print(f"File renamed to: {file}")
+                                    
                                     if msg.document:
                                         print(f"Document detected - Mime type: {msg.document.mime_type}")
                                         result = await app.send_document(
@@ -1020,38 +1025,61 @@ async def handle_large_file(file, sender, edit, caption):
         return
 
 async def rename_file(file, sender):
-    delete_words = load_delete_words(sender)
-    custom_rename_tag = get_user_rename_preference(sender)
-    replacements = load_replacement_words(sender)
-    
-    last_dot_index = str(file).rfind('.')
-    
-    if last_dot_index != -1 and last_dot_index != 0:
-        ggn_ext = str(file)[last_dot_index + 1:]
+    try:
+        delete_words = load_delete_words(sender)
+        custom_rename_tag = get_user_rename_preference(sender)
+        replacements = load_replacement_words(sender)
         
-        if ggn_ext.isalpha() and len(ggn_ext) <= 9:
-            if ggn_ext.lower() in VIDEO_EXTENSIONS:
-                original_file_name = str(file)[:last_dot_index]
-                file_extension = 'mp4'
+        print(f"Original file: {file}")
+        print(f"Delete words: {delete_words}")
+        print(f"Custom rename tag: {custom_rename_tag}")
+        print(f"Replacements: {replacements}")
+        
+        last_dot_index = str(file).rfind('.')
+        
+        if last_dot_index != -1 and last_dot_index != 0:
+            ggn_ext = str(file)[last_dot_index + 1:]
+            
+            if ggn_ext.isalpha() and len(ggn_ext) <= 9:
+                if ggn_ext.lower() in VIDEO_EXTENSIONS:
+                    original_file_name = str(file)[:last_dot_index]
+                    file_extension = 'mp4'
+                else:
+                    original_file_name = str(file)[:last_dot_index]
+                    file_extension = ggn_ext
             else:
                 original_file_name = str(file)[:last_dot_index]
-                file_extension = ggn_ext
+                file_extension = 'mp4'
         else:
-            original_file_name = str(file)[:last_dot_index]
+            original_file_name = str(file)
             file_extension = 'mp4'
-    else:
-        original_file_name = str(file)
-        file_extension = 'mp4'
+            
+        print(f"Original filename: {original_file_name}")
+        print(f"File extension: {file_extension}")
         
-    for word in delete_words:
-        original_file_name = original_file_name.replace(word, "")
+        # Apply delete words
+        for word in delete_words:
+            original_file_name = original_file_name.replace(word, "")
+            print(f"After deleting '{word}': {original_file_name}")
 
-    for word, replace_word in replacements.items():
-        original_file_name = original_file_name.replace(word, replace_word)
+        # Apply replacements
+        for word, replace_word in replacements.items():
+            original_file_name = original_file_name.replace(word, replace_word)
+            print(f"After replacing '{word}' with '{replace_word}': {original_file_name}")
 
-    new_file_name = f"{original_file_name} {custom_rename_tag}.{file_extension}"
-    await asyncio.to_thread(os.rename, file, new_file_name)
-    return new_file_name
+        # Sanitize the filename
+        original_file_name = await sanitize(original_file_name)
+        print(f"After sanitizing: {original_file_name}")
+
+        new_file_name = f"{original_file_name} {custom_rename_tag}.{file_extension}"
+        print(f"Final new filename: {new_file_name}")
+        
+        await asyncio.to_thread(os.rename, file, new_file_name)
+        print(f"File renamed successfully to: {new_file_name}")
+        return new_file_name
+    except Exception as e:
+        print(f"Error in rename_file: {e}")
+        return file  # Return original file if rename fails
 
 
 async def sanitize(file_name: str) -> str:
