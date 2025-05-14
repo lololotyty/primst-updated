@@ -1081,7 +1081,10 @@ async def rename_file(file, sender):
         # Sanitize the filename
         original_file_name = await sanitize(original_file_name)
         print(f"After sanitizing: {original_file_name}")
-
+        
+        # One final check to remove any remaining _app_downloads prefix
+        original_file_name = original_file_name.replace("_app_downloads", "")
+        
         new_file_name = f"{original_file_name} {custom_rename_tag}.{file_extension}"
         print(f"Final new filename: {new_file_name}")
         
@@ -1091,6 +1094,9 @@ async def rename_file(file, sender):
             new_file_path = os.path.join(directory, new_file_name)
         else:
             new_file_path = new_file_name
+        
+        # Ensure no _app_downloads in the final path
+        new_file_path = new_file_path.replace("_app_downloads", "")
             
         await asyncio.to_thread(os.rename, original_file_path, new_file_path)
         print(f"File renamed successfully to: {new_file_path}")
@@ -1105,8 +1111,9 @@ async def sanitize(file_name: str) -> str:
     file_name = file_name.replace("_app_downloads", "")
     # Then sanitize invalid characters
     sanitized_name = re.sub(r'[\\/:"*?<>|]', '_', file_name)
-    # Strip leading/trailing whitespaces
-    return sanitized_name.strip()
+    # Strip leading/trailing whitespaces and remove _app_downloads again
+    sanitized_name = sanitized_name.strip().replace("_app_downloads", "")
+    return sanitized_name
     
 async def is_file_size_exceeding(file_path, size_limit):
     try:
