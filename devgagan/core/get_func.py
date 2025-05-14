@@ -240,53 +240,98 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         
         else:
             edit = await app.edit_message_text(sender, edit_id, "Public link detected...")
-            chat = msg_link.split("t.me/")[1].split("/")[0]
-            msg_id = int(msg_link.split("/")[-1])
             try:
+                chat = msg_link.split("t.me/")[1].split("/")[0]
+                msg_id = int(msg_link.split("/")[-1])
+                print(f"Processing public link - Chat: {chat}, Message ID: {msg_id}")
+                
                 # First get the message to check if it exists and has media
-                msg = await app.get_messages(chat, msg_id)
-                if not msg or msg.empty:
-                    await edit.edit("Message not found or is empty")
-                    return
+                try:
+                    msg = await app.get_messages(chat, msg_id)
+                    print(f"Message retrieved: {msg}")
                     
-                if msg.media:
-                    # For media messages (including PDFs), try to copy first
-                    try:
-                        result = await app.copy_message(sender, chat, msg_id)
+                    if not msg:
+                        print("Message is None")
+                        await edit.edit("Message not found")
+                        return
+                        
+                    if msg.empty:
+                        print("Message is empty")
+                        await edit.edit("Message is empty")
+                        return
+                        
+                    if msg.service:
+                        print("Message is a service message")
+                        await edit.edit("Cannot process service messages")
+                        return
+                    
+                    print(f"Message media type: {msg.media}")
+                    if msg.media:
+                        # For media messages, try to copy first
+                        try:
+                            print("Attempting to copy message...")
+                            result = await app.copy_message(sender, chat, msg_id)
+                            if result:
+                                print("Message copied successfully")
+                                await result.copy(LOG_GROUP)
+                                await edit.delete(2)
+                                return
+                        except Exception as e:
+                            print(f"Error copying message: {e}")
+                            # If copy fails, try downloading and uploading
+                            try:
+                                print("Attempting to download media...")
+                                file = await app.download_media(msg)
+                                if file:
+                                    print(f"Media downloaded to: {file}")
+                                    try:
+                                        if msg.document:
+                                            print(f"Document detected - Mime type: {msg.document.mime_type}")
+                                            result = await app.send_document(
+                                                sender, 
+                                                file, 
+                                                caption=msg.caption.markdown if msg.caption else None,
+                                                progress=progress_bar,
+                                                progress_args=("╭─────────────────────╮\n│      **__Uploading Document__**\n├─────────────────────", edit, time.time())
+                                            )
+                                        else:
+                                            print("Using send_media_message for other media types")
+                                            result = await send_media_message(app, sender, msg, msg.caption.markdown if msg.caption else None, None)
+                                        
+                                        if result:
+                                            print("Media uploaded successfully")
+                                            await result.copy(LOG_GROUP)
+                                            await edit.delete(2)
+                                    except Exception as upload_error:
+                                        print(f"Error during upload: {upload_error}")
+                                        await edit.edit(f"Error uploading media: {str(upload_error)}")
+                                    finally:
+                                        if os.path.exists(file):
+                                            os.remove(file)
+                                            print(f"Cleaned up temporary file: {file}")
+                                    return
+                                else:
+                                    print("Download returned no file")
+                                    await edit.edit("Failed to download media")
+                            except Exception as download_error:
+                                print(f"Error downloading media: {download_error}")
+                                await edit.edit(f"Error downloading media: {str(download_error)}")
+                    elif msg.text:
+                        print("Processing text message")
+                        result = await app.send_message(sender, msg.text.markdown)
                         if result:
                             await result.copy(LOG_GROUP)
                             await edit.delete(2)
                             return
-                    except Exception as e:
-                        print(f"Error copying message: {e}")
-                        # If copy fails, try downloading and uploading
-                        try:
-                            file = await app.download_media(msg)
-                            if file:
-                                if msg.document and msg.document.mime_type == "application/pdf":
-                                    result = await app.send_document(sender, file, caption=msg.caption.markdown if msg.caption else None)
-                                else:
-                                    result = await send_media_message(app, sender, msg, msg.caption.markdown if msg.caption else None, None)
-                                if result:
-                                    await result.copy(LOG_GROUP)
-                                    await edit.delete(2)
-                                if os.path.exists(file):
-                                    os.remove(file)
-                                return
-                        except Exception as e:
-                            print(f"Error downloading/uploading media: {e}")
-                            await edit.edit(f"Error occurred: {str(e)}")
-                elif msg.text:
-                    result = await app.send_message(sender, msg.text.markdown)
-                    if result:
-                        await result.copy(LOG_GROUP)
-                        await edit.delete(2)
-                        return
-                else:
-                    await edit.edit("No media or text found in the message")
+                    else:
+                        print("No media or text found in message")
+                        await edit.edit("No media or text found in the message")
+                except Exception as get_msg_error:
+                    print(f"Error getting message: {get_msg_error}")
+                    await edit.edit(f"Error retrieving message: {str(get_msg_error)}")
             except Exception as e:
-                print(f"Error getting message: {e}")
-                await edit.edit(f"Error occurred: {str(e)}")
+                print(f"Error processing public link: {e}")
+                await edit.edit(f"Error processing link: {str(e)}")
             return
             
         # Fetch the target message
