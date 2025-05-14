@@ -1035,6 +1035,9 @@ async def rename_file(file, sender):
         print(f"Custom rename tag: {custom_rename_tag}")
         print(f"Replacements: {replacements}")
         
+        # Remove _app_downloads prefix if it exists
+        file = str(file).replace("_app_downloads", "")
+        
         last_dot_index = str(file).rfind('.')
         
         if last_dot_index != -1 and last_dot_index != 0:
