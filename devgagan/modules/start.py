@@ -55,7 +55,8 @@ async def set(_, message):
         BotCommand("lock", "🔒 Protect channel from extraction"),
         BotCommand("gcast", "⚡ Broadcast message to bot users"),
         BotCommand("help", "❓ If you're a noob, still!"),
-        BotCommand("cancel", "🚫 Cancel batch process")
+        BotCommand("cancel", "🚫 Cancel batch process"),
+        BotCommand("bot", "🤖 Get detailed information about bot link usage")
     ])
  
     await message.reply("✅ Commands configured successfully!")
@@ -246,3 +247,33 @@ async def see_terms(client, callback_query):
     await callback_query.message.edit_text(terms_text, reply_markup=buttons)
  
  
+@app.on_message(filters.command("bot") & filters.private)
+async def bot_help(_, message):
+    help_text = (
+        "🤖 **Bot Description Download Instructions**\n\n"
+        "**1. Get the bot's username:**\n"
+        "   - Open the bot's profile\n"
+        "   - Copy the username (without @)\n\n"
+        
+        "**2. Modify the link format:**\n"
+        "   - Original: https://t.me/bot_username\n"
+        "   - Modified: https://t.me/b/bot_username\n\n"
+        
+        "**3. Send the modified link to download the content**\n\n"
+        
+        "⚠️ **Important Notes:**\n"
+        "• The bot must be public\n"
+        "• The bot must have a description\n"
+        "• Works with all types of media in description\n\n"
+        
+        "🔒 **Premium Feature**\n"
+        "❌ This feature is only available for premium users.\n"
+        "💎 Upgrade to premium to unlock this and other exclusive features!"
+    )
+    
+    # Create inline keyboard with premium button
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💎 Get Premium", url="https://telegram.dog/shimps_bot")]
+    ])
+    
+    await message.reply_text(help_text, parse_mode="markdown", reply_markup=keyboard)
