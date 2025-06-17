@@ -23,6 +23,7 @@ from pyrogram.raw.functions.bots import SetBotInfo
 from pyrogram.raw.types import InputUserSelf
 
 from pyrogram.types import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram.enums import ParseMode
  
 @app.on_message(filters.command("set"))
 async def set(_, message):
@@ -250,23 +251,23 @@ async def see_terms(client, callback_query):
 @app.on_message(filters.command("bot") & filters.private)
 async def bot_help(_, message):
     help_text = (
-        "🤖 <b>Bot Description Download Instructions</b>\n\n"
-        "<b>1. Get the bot's username:</b>\n"
+        "🤖 **Bot Description Download Instructions**\n\n"
+        "**1. Get the bot's username:**\n"
         "   • Open the bot's profile\n"
         "   • Copy the username (without @)\n\n"
         
-        "<b>2. Modify the link format:</b>\n"
+        "**2. Modify the link format:**\n"
         "   • Original: https://t.me/bot_username\n"
         "   • Modified: https://t.me/b/bot_username\n\n"
         
-        "<b>3. Send the modified link to download the content</b>\n\n"
+        "**3. Send the modified link to download the content**\n\n"
         
-        "⚠️ <b>Important Notes:</b>\n"
+        "⚠️ **Important Notes:**\n"
         "• The bot must be public\n"
         "• The bot must have a description\n"
         "• Works with all types of media in description\n\n"
         
-        "🔒 <b>Premium Feature</b>\n"
+        "🔒 **Premium Feature**\n"
         "❌ This feature is only available for premium users.\n"
         "💎 Upgrade to premium to unlock this and other exclusive features!"
     )
@@ -276,4 +277,4 @@ async def bot_help(_, message):
         [InlineKeyboardButton("💎 Get Premium", url="https://telegram.dog/shimps_bot")]
     ])
     
-    await message.reply_text(help_text, parse_mode="html", reply_markup=keyboard)
+    await message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
