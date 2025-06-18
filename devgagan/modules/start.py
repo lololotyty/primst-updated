@@ -277,15 +277,15 @@ async def bot_help(_, message):
     "3. **Send the modified link to download the content**\n\n"
 
 "⚠️ **Important Notes**:\n\n"
-"• Put the user's username (without @)
-• The user must not have blocked you
-• For view-once messages, send the link quickly
-• Works with all types of media (photos, videos, documents, etc.)"
+"• Put the user's username (without @)"
+"• The user must not have blocked you"
+"• For view-once messages, send the link quickly"
+"• Works with all types of media (photos, videos, documents, etc.)"
 
 "🔒 **Premium Feature**\n\n"
 
-"❌ This feature is only available for premium users.
-💎 Upgrade to premium to unlock this and other exclusive features!"
+"❌ This feature is only available for premium users."
+"💎 Upgrade to premium to unlock this and other exclusive features!"
     )
     
     # Create inline keyboard with premium button
