@@ -254,18 +254,17 @@ async def bot_help(_, message):
         "🤖 **Bot Description Download Instructions**\n\n"
         "**1. Get the bot's username:**\n"
         "   • Open the bot's profile\n"
-        "   • Copy the username (without @)\n\n"
+        "   • Copy the username (without @) and also get messege_id if do not find, contact support @SHIMPERD_BRO 😎\n\n"
         
         "**2. Modify the link format:**\n"
         "   • Original: https://t.me/bot_username\n"
-        "   • Modified: https://t.me/b/bot_username\n\n"
+        "   • Modified: https://t.me/b/bot_username/messege_id\n\n"
         
         "**3. Send the modified link to download the content**\n\n"
         
         "⚠️ **Important Notes:**\n"
         "• The bot must be public\n"
-        "• The bot must have a description\n"
-        "• Works with all types of media in description\n\n"
+        "• user must be a member of that bot\n\n"
         
         "🔒 **Premium Feature**\n"
         "❌ This feature is only available for premium users.\n"
