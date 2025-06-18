@@ -182,12 +182,31 @@ async def rename_file(file, user_id):
     os.rename(file, new_path)
     return new_path
 
+async def is_private_user_link(link: str) -> bool:
+    """Check if the link is a private user chat link."""
+    return 't.me/p/' in link
+
+async def extract_private_user_info(link: str) -> tuple:
+    """Extract username and message ID from private user link."""
+    try:
+        # Remove any query parameters
+        link = link.split('?')[0]
+        # Split by /p/ and then by &
+        parts = link.split('/p/')[1].split('&')
+        username = parts[0]
+        message_id = int(parts[1])
+        return username, message_id
+    except Exception as e:
+        print(f"Error extracting private user info: {e}")
+        return None, None
+
 async def handle_private_user_chat(userbot, user_id, msg_id, link, message):
     try:
-        # Extract username and message ID from the link
-        parts = link.split("/")
-        username = parts[-2]
-        msg_id = int(parts[-1])
+        # Extract username and message ID from the special link format
+        username, msg_id = await extract_private_user_info(link)
+        if not username or not msg_id:
+            await app.edit_message_text(user_id, msg_id, "Invalid private user link format. Use format: https://t.me/p/username&messageid")
+            return
         
         # Get the message from the private chat
         msg = await userbot.get_messages(username, msg_id)
@@ -329,7 +348,7 @@ async def split_and_upload_file(app, user_id, file_path, caption):
 
 async def is_normal_tg_link(link: str) -> bool:
     """Check if the link is a standard Telegram link."""
-    special_identifiers = ['t.me/+', 't.me/c/', 't.me/b/', 'tg://openmessage']
+    special_identifiers = ['t.me/+', 't.me/c/', 't.me/b/', 'tg://openmessage', 't.me/p/']
     return 't.me/' in link and not any(x in link for x in special_identifiers)
 
 async def process_special_links(userbot, user_id, msg, link):
@@ -337,14 +356,14 @@ async def process_special_links(userbot, user_id, msg, link):
     if 't.me/+' in link:
         result = await userbot_join(userbot, link)
         await msg.edit_text(result)
+    elif 't.me/p/' in link:  # Handle private user chat links with special format
+        await handle_private_user_chat(userbot, user_id, msg.id, link, msg)
+        await set_interval(user_id, interval_minutes=45)
     elif any(sub in link for sub in ['t.me/c/', 't.me/b/', '/s/', 'tg://openmessage']):
         await process_and_upload_link(userbot, user_id, msg.id, link, 0, msg)
         await set_interval(user_id, interval_minutes=45)
-    elif 't.me/' in link:  # Handle private user chat links
-        await handle_private_user_chat(userbot, user_id, msg.id, link, msg)
-        await set_interval(user_id, interval_minutes=45)
     else:
-        await msg.edit_text("Invalid link format.")
+        await msg.edit_text("Invalid link format. For private user messages, use format: https://t.me/p/username&messageid")
 
 
 @app.on_message(filters.command("batch") & filters.private)
