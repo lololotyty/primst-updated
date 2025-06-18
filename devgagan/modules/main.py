@@ -28,6 +28,9 @@ from datetime import datetime, timedelta
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 import subprocess
 from devgagan.modules.shrink import is_user_verified
+import os
+import math
+
 async def generate_random_name(length=8):
     return ''.join(random.choices(string.ascii_lowercase, k=length))
 
@@ -148,11 +151,187 @@ async def initialize_userbot(user_id): # this ensure the single startup .. even 
     return None
 
 
+async def get_media_filename(msg):
+    """Get appropriate filename for media."""
+    if msg.media:
+        if msg.photo:
+            return f"photo_{int(time.time())}.jpg"
+        elif msg.video:
+            return f"video_{int(time.time())}.mp4"
+        elif msg.document:
+            return msg.document.file_name
+        elif msg.audio:
+            return msg.audio.file_name
+        elif msg.voice:
+            return f"voice_{int(time.time())}.ogg"
+    return f"file_{int(time.time())}"
+
+async def get_final_caption(msg, user_id):
+    """Get the final caption for the media."""
+    caption = msg.caption if msg.caption else ""
+    return caption
+
+async def rename_file(file, user_id):
+    """Rename file with user-specific prefix."""
+    if not file:
+        return file
+    directory = os.path.dirname(file)
+    filename = os.path.basename(file)
+    new_filename = f"{user_id}_{filename}"
+    new_path = os.path.join(directory, new_filename)
+    os.rename(file, new_path)
+    return new_path
+
+async def handle_private_user_chat(userbot, user_id, msg_id, link, message):
+    try:
+        # Extract username and message ID from the link
+        parts = link.split("/")
+        username = parts[-2]
+        msg_id = int(parts[-1])
+        
+        # Get the message from the private chat
+        msg = await userbot.get_messages(username, msg_id)
+        if not msg or msg.service or msg.empty:
+            await app.edit_message_text(user_id, msg_id, "Message not found or is empty")
+            return
+
+        edit = await app.edit_message_text(user_id, msg_id, "**Downloading...**")
+        
+        # Handle different message types
+        if msg.media:
+            file_name = await get_media_filename(msg)
+            file = await userbot.download_media(
+                msg,
+                file_name=file_name,
+                progress=progress_bar,
+                progress_args=("╭─────────────────────╮\n│      **__Downloading__...**\n├─────────────────────", edit, time.time())
+            )
+            
+            if not file:
+                await edit.edit("Failed to download media")
+                return
+
+            file = await rename_file(file, user_id)
+            caption = await get_final_caption(msg, user_id)
+            
+            # Handle different media types
+            if msg.photo:
+                result = await app.send_photo(user_id, file, caption=caption)
+            elif msg.video:
+                file_size = os.path.getsize(file)
+                if file_size > 2 * 1024 * 1024 * 1024:  # 2GB limit
+                    await edit.delete()
+                    await split_and_upload_file(app, user_id, file, caption)
+                else:
+                    await upload_media(user_id, file, caption, edit)
+            elif msg.document:
+                result = await app.send_document(user_id, file, caption=caption)
+            elif msg.audio:
+                result = await app.send_audio(user_id, file, caption=caption)
+            elif msg.voice:
+                result = await app.send_voice(user_id, file)
+            elif msg.sticker:
+                result = await app.send_sticker(user_id, msg.sticker.file_id)
+            
+            if result:
+                await result.copy(LOG_GROUP)
+        elif msg.text:
+            result = await app.send_message(user_id, msg.text.markdown)
+            if result:
+                await result.copy(LOG_GROUP)
+        
+        await edit.delete(2)
+        
+    except Exception as e:
+        print(f"Error in private user chat: {e}")
+        await app.edit_message_text(user_id, msg_id, f"Error processing private chat: {str(e)}")
+    finally:
+        if 'file' in locals() and os.path.exists(file):
+            os.remove(file)
+
+async def upload_media(user_id, file, caption, edit):
+    """Upload media to Telegram."""
+    try:
+        if file.endswith(('.jpg', '.jpeg', '.png')):
+            result = await app.send_photo(user_id, file, caption=caption)
+        elif file.endswith(('.mp4', '.mkv', '.avi', '.mov')):
+            result = await app.send_video(user_id, file, caption=caption)
+        elif file.endswith(('.mp3', '.m4a', '.ogg')):
+            result = await app.send_audio(user_id, file, caption=caption)
+        else:
+            result = await app.send_document(user_id, file, caption=caption)
+        
+        if result:
+            await result.copy(LOG_GROUP)
+        await edit.delete(2)
+    except Exception as e:
+        print(f"Error uploading media: {e}")
+        await edit.edit(f"Error uploading media: {str(e)}")
+
+async def split_and_upload_file(app, user_id, file_path, caption):
+    """Split large files and upload them."""
+    if not os.path.exists(file_path):
+        await app.send_message(user_id, "❌ File not found!")
+        return
+
+    file_size = os.path.getsize(file_path)
+    PART_SIZE = int(1.9 * 1024 * 1024 * 1024)  # 1.9 GB
+    BUFFER_SIZE = 8 * 1024 * 1024  # 8MB buffer
+    total_parts = math.ceil(file_size / PART_SIZE)
+    
+    start = await app.send_message(
+        user_id, 
+        f"⚙️ **File Processing Started**\n\n"
+        f"• **File Size:** {file_size / (1024 * 1024 * 1024):.2f} GB\n"
+        f"• **Parts:** {total_parts} (max 1.9GB each)\n"
+        f"• **Status:** Preparing to split file..."
+    )
+    
+    part_number = 0
+    with open(file_path, 'rb') as f:
+        while True:
+            part_number += 1
+            part_file = f"{file_path}.part{part_number}"
+            
+            with open(part_file, 'wb') as part:
+                bytes_written = 0
+                while bytes_written < PART_SIZE:
+                    chunk = f.read(min(BUFFER_SIZE, PART_SIZE - bytes_written))
+                    if not chunk:
+                        break
+                    part.write(chunk)
+                    bytes_written += len(chunk)
+            
+            if bytes_written == 0:
+                os.remove(part_file)
+                break
+                
+            await start.edit_text(
+                f"⚙️ **Uploading Part {part_number}/{total_parts}**\n\n"
+                f"• **File Size:** {file_size / (1024 * 1024 * 1024):.2f} GB\n"
+                f"• **Current Part:** {part_number}/{total_parts}\n"
+                f"• **Status:** Uploading..."
+            )
+            
+            try:
+                await app.send_document(
+                    user_id,
+                    part_file,
+                    caption=f"{caption}\n\nPart {part_number}/{total_parts}" if caption else f"Part {part_number}/{total_parts}"
+                )
+            except Exception as e:
+                await start.edit_text(f"Error uploading part {part_number}: {str(e)}")
+                return
+            finally:
+                os.remove(part_file)
+    
+    await start.edit_text("✅ All parts uploaded successfully!")
+
 async def is_normal_tg_link(link: str) -> bool:
     """Check if the link is a standard Telegram link."""
     special_identifiers = ['t.me/+', 't.me/c/', 't.me/b/', 'tg://openmessage']
     return 't.me/' in link and not any(x in link for x in special_identifiers)
-    
+
 async def process_special_links(userbot, user_id, msg, link):
     """Handle special Telegram links."""
     if 't.me/+' in link:
@@ -160,6 +339,9 @@ async def process_special_links(userbot, user_id, msg, link):
         await msg.edit_text(result)
     elif any(sub in link for sub in ['t.me/c/', 't.me/b/', '/s/', 'tg://openmessage']):
         await process_and_upload_link(userbot, user_id, msg.id, link, 0, msg)
+        await set_interval(user_id, interval_minutes=45)
+    elif 't.me/' in link:  # Handle private user chat links
+        await handle_private_user_chat(userbot, user_id, msg.id, link, msg)
         await set_interval(user_id, interval_minutes=45)
     else:
         await msg.edit_text("Invalid link format.")
