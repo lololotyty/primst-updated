@@ -237,7 +237,7 @@ async def handle_private_user_chat(userbot, user_id, msg_id, link, message):
             
             # Handle different media types
             if msg.photo:
-                result = await app.send_photo(user_id, file, caption=caption)
+                await app.send_photo(user_id, file, caption=caption)
             elif msg.video:
                 file_size = os.path.getsize(file)
                 if file_size > 2 * 1024 * 1024 * 1024:  # 2GB limit
@@ -246,20 +246,15 @@ async def handle_private_user_chat(userbot, user_id, msg_id, link, message):
                 else:
                     await upload_media(user_id, file, caption, edit)
             elif msg.document:
-                result = await app.send_document(user_id, file, caption=caption)
+                await app.send_document(user_id, file, caption=caption)
             elif msg.audio:
-                result = await app.send_audio(user_id, file, caption=caption)
+                await app.send_audio(user_id, file, caption=caption)
             elif msg.voice:
-                result = await app.send_voice(user_id, file)
+                await app.send_voice(user_id, file)
             elif msg.sticker:
-                result = await app.send_sticker(user_id, msg.sticker.file_id)
-            
-            if result:
-                await result.copy(LOG_GROUP)
+                await app.send_sticker(user_id, msg.sticker.file_id)
         elif msg.text:
-            result = await app.send_message(user_id, msg.text.markdown)
-            if result:
-                await result.copy(LOG_GROUP)
+            await app.send_message(user_id, msg.text.markdown)
         
         if edit:
             await edit.delete()
@@ -285,16 +280,14 @@ async def upload_media(user_id, file, caption, edit):
     """Upload media to Telegram."""
     try:
         if file.endswith(('.jpg', '.jpeg', '.png')):
-            result = await app.send_photo(user_id, file, caption=caption)
+            await app.send_photo(user_id, file, caption=caption)
         elif file.endswith(('.mp4', '.mkv', '.avi', '.mov')):
-            result = await app.send_video(user_id, file, caption=caption)
+            await app.send_video(user_id, file, caption=caption)
         elif file.endswith(('.mp3', '.m4a', '.ogg')):
-            result = await app.send_audio(user_id, file, caption=caption)
+            await app.send_audio(user_id, file, caption=caption)
         else:
-            result = await app.send_document(user_id, file, caption=caption)
+            await app.send_document(user_id, file, caption=caption)
         
-        if result:
-            await result.copy(LOG_GROUP)
         if edit:
             try:
                 await edit.delete()
