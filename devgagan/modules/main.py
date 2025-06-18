@@ -201,20 +201,22 @@ async def extract_private_user_info(link: str) -> tuple:
         return None, None
 
 async def handle_private_user_chat(userbot, user_id, msg_id, link, message):
+    edit = None
+    file = None
     try:
         # Extract username and message ID from the special link format
         username, msg_id = await extract_private_user_info(link)
         if not username or not msg_id:
-            await app.edit_message_text(user_id, msg_id, "Invalid private user link format. Use format: https://t.me/p/username&messageid")
+            await message.reply("Invalid private user link format. Use format: https://t.me/p/username&messageid")
             return
         
         # Get the message from the private chat
         msg = await userbot.get_messages(username, msg_id)
         if not msg or msg.service or msg.empty:
-            await app.edit_message_text(user_id, msg_id, "Message not found or is empty")
+            await message.reply("Message not found or is empty")
             return
 
-        edit = await app.edit_message_text(user_id, msg_id, "**Downloading...**")
+        edit = await message.reply("**Downloading...**")
         
         # Handle different message types
         if msg.media:
@@ -227,7 +229,7 @@ async def handle_private_user_chat(userbot, user_id, msg_id, link, message):
             )
             
             if not file:
-                await edit.edit("Failed to download media")
+                await edit.edit_text("Failed to download media")
                 return
 
             file = await rename_file(file, user_id)
@@ -259,14 +261,25 @@ async def handle_private_user_chat(userbot, user_id, msg_id, link, message):
             if result:
                 await result.copy(LOG_GROUP)
         
-        await edit.delete(2)
+        if edit:
+            await edit.delete()
         
     except Exception as e:
         print(f"Error in private user chat: {e}")
-        await app.edit_message_text(user_id, msg_id, f"Error processing private chat: {str(e)}")
+        error_msg = f"Error processing private chat: {str(e)}"
+        if edit:
+            try:
+                await edit.edit_text(error_msg)
+            except Exception:
+                await message.reply(error_msg)
+        else:
+            await message.reply(error_msg)
     finally:
-        if 'file' in locals() and os.path.exists(file):
-            os.remove(file)
+        if file and os.path.exists(file):
+            try:
+                os.remove(file)
+            except Exception as e:
+                print(f"Error removing file: {e}")
 
 async def upload_media(user_id, file, caption, edit):
     """Upload media to Telegram."""
@@ -282,10 +295,18 @@ async def upload_media(user_id, file, caption, edit):
         
         if result:
             await result.copy(LOG_GROUP)
-        await edit.delete(2)
+        if edit:
+            try:
+                await edit.delete()
+            except Exception:
+                pass
     except Exception as e:
         print(f"Error uploading media: {e}")
-        await edit.edit(f"Error uploading media: {str(e)}")
+        if edit:
+            try:
+                await edit.edit_text(f"Error uploading media: {str(e)}")
+            except Exception:
+                pass
 
 async def split_and_upload_file(app, user_id, file_path, caption):
     """Split large files and upload them."""
