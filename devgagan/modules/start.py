@@ -256,7 +256,7 @@ async def bot_help(_, message):
         "   • Copy the username (without @) and also get messege_id if do not find, contact support @SHIMPERD_BRO 😎\n\n"
        
         "**2. Modify the link format:**\n"
-        "   • Original: https://t.me/bot_username\n"
+        "   • Original: https://t.me/bot_usernameez\n"
         "   • Modified: https://t.me/b/bot_username/messege_id\n\n"
         
         "**3. Send the modified link to download the content**\n\n"
@@ -270,7 +270,7 @@ async def bot_help(_, message):
         "   • Copy the username (without @) and also get messege_id if do not find, contact support @SHIMPERD_BRO 😎\n\n"
        
         "**2. Modify the link format:**\n"
-        "   • Original: https://t.me/username\n"
+        "   • Original: https://t.me/usernameez\n"
         "   • Modified: https://t.me/p/user's_username&messege_id\n\n"
         
         "**3. Send the modified link to download the content**\n\n"
