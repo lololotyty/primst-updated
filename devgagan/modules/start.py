@@ -248,14 +248,13 @@ async def see_terms(client, callback_query):
     await callback_query.message.edit_text(terms_text, reply_markup=buttons)
  
  
-@app.on_message(filters.command("bot") & filters.private)
+@app.on_message(filters.command("hell_download") & filters.private)
 async def bot_help(_, message):
     help_text = (
-        "🤖 **Bot Description Download Instructions**\n\n"
+        "🤖 **Bots media Download Instructions**\n\n"
         "**1. Get the bot's username:**\n"
-        "   • Open the bot's profile\n"
         "   • Copy the username (without @) and also get messege_id if do not find, contact support @SHIMPERD_BRO 😎\n\n"
-        
+       
         "**2. Modify the link format:**\n"
         "   • Original: https://t.me/bot_username\n"
         "   • Modified: https://t.me/b/bot_username/messege_id\n\n"
@@ -265,10 +264,28 @@ async def bot_help(_, message):
         "⚠️ **Important Notes:**\n"
         "• The bot must be public\n"
         "• user must be a member of that bot\n\n"
-        
-        "🔒 **Premium Feature**\n"
-        "❌ This feature is only available for premium users.\n"
-        "💎 Upgrade to premium to unlock this and other exclusive features!"
+
+        "📱 **Private User Chat Download Instructions**\n\n"
+
+        "1. Get the message link from Telegram or ask with support @SHIMPERD_BRO:
+😎😎😎😎\n\n"
+
+        "2. **Modify the link format**:\n"
+   "- Original: tg://openmessage?user_id=123456789&message_id=123
+   - Modified: https://t.me/p/username&123"
+
+    "3. **Send the modified link to download the content**\n\n"
+
+"⚠️ **Important Notes**:\n\n"
+"• Put the user's username (without @)
+• The user must not have blocked you
+• For view-once messages, send the link quickly
+• Works with all types of media (photos, videos, documents, etc.)"
+
+"🔒 **Premium Feature**\n\n"
+
+"❌ This feature is only available for premium users.
+💎 Upgrade to premium to unlock this and other exclusive features!"
     )
     
     # Create inline keyboard with premium button
