@@ -21,6 +21,7 @@ from telethon.sync import TelegramClient
 from motor.motor_asyncio import AsyncIOMotorClient
 import time
 from telethon.errors import FloodWaitError
+import sys
 
 # Set up logging
 logging.basicConfig(
@@ -33,17 +34,21 @@ loop = asyncio.get_event_loop()
 
 botStartTime = time.time()
 
-app = Client(
-    ":RestrictBot:",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    workers=100,
-    parse_mode=ParseMode.MARKDOWN,
-    max_concurrent_transmissions=10,
-    request_retries=3,
-    retry_delay=1
-)
+# Initialize Pyrogram client with optimized settings
+try:
+    app = Client(
+        ":RestrictBot:",
+        api_id=API_ID,
+        api_hash=API_HASH,
+        bot_token=BOT_TOKEN,
+        workers=100,  # Increased from 50 to 100 for better performance
+        parse_mode=ParseMode.MARKDOWN,
+        max_concurrent_transmissions=10  # Limit concurrent uploads
+    )
+    logger.info("Pyrogram client initialized successfully")
+except Exception as e:
+    logger.critical(f"Failed to initialize Pyrogram client: {e}")
+    sys.exit(1)
 
 # Initialize Telethon client with FloodWait error handling
 async def initialize_telethon():
