@@ -100,277 +100,171 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
         document_formats = {'pdf', 'docx', 'txt', 'epub'}
         image_formats = {'jpg', 'png', 'jpeg'}
 
-        # Pyrogram upload
+        # Pyrogram upload with optimized performance
         if upload_method == "Pyrogram":
-            if file.split('.')[-1].lower() in video_formats:
-                dm = await app.send_video(
-                    chat_id=target_chat_id,
-                    video=file,
-                    caption=caption,
-                    height=height,
-                    width=width,
-                    duration=duration,
-                    thumb=thumb_path,
-                    reply_to_message_id=topic_id,
-                    parse_mode=ParseMode.MARKDOWN,
-                    progress=progress_bar,
-                    progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
-                )
-                await dm.copy(LOG_GROUP)
-                
-            elif file.split('.')[-1].lower() in image_formats:
-                dm = await app.send_photo(
-                    chat_id=target_chat_id,
-                    photo=file,
-                    caption=caption,
-                    parse_mode=ParseMode.MARKDOWN,
-                    progress=progress_bar,
-                    reply_to_message_id=topic_id,
-                    progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
-                )
-                await dm.copy(LOG_GROUP)
-            else:
-                dm = await app.send_document(
-                    chat_id=target_chat_id,
-                    document=file,
-                    caption=caption,
-                    thumb=thumb_path,
-                    reply_to_message_id=topic_id,
-                    progress=progress_bar,
-                    parse_mode=ParseMode.MARKDOWN,
-                    progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
-                )
-                await asyncio.sleep(2)
-                await dm.copy(LOG_GROUP)
+            try:
+                if file.split('.')[-1].lower() in video_formats:
+                    dm = await app.send_video(
+                        chat_id=target_chat_id,
+                        video=file,
+                        caption=caption,
+                        height=height,
+                        width=width,
+                        duration=duration,
+                        thumb=thumb_path,
+                        reply_to_message_id=topic_id,
+                        parse_mode=ParseMode.MARKDOWN,
+                        progress=progress_bar,
+                        progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
+                    )
+                    await dm.copy(LOG_GROUP)
+                    
+                elif file.split('.')[-1].lower() in image_formats:
+                    dm = await app.send_photo(
+                        chat_id=target_chat_id,
+                        photo=file,
+                        caption=caption,
+                        parse_mode=ParseMode.MARKDOWN,
+                        progress=progress_bar,
+                        reply_to_message_id=topic_id,
+                        progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
+                    )
+                    await dm.copy(LOG_GROUP)
+                else:
+                    dm = await app.send_document(
+                        chat_id=target_chat_id,
+                        document=file,
+                        caption=caption,
+                        thumb=thumb_path,
+                        reply_to_message_id=topic_id,
+                        progress=progress_bar,
+                        parse_mode=ParseMode.MARKDOWN,
+                        progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
+                    )
+                    await asyncio.sleep(1)  # Reduced sleep time
+                    await dm.copy(LOG_GROUP)
+                    
+            except Exception as e:
+                await app.send_message(LOG_GROUP, f"**Upload Failed:** {str(e)}")
+                print(f"Error during Pyrogram upload: {e}")
+                raise
 
-        # Telethon upload
+        # Telethon upload with optimized performance
         elif upload_method == "Telethon":
-            await edit.delete()
-            progress_message = await gf.send_message(sender, "**__Uploading...__**")
-            caption = await format_caption_to_html(caption)
-            uploaded = await fast_upload(
-                gf, file,
-                reply=progress_message,
-                name=None,
-                progress_bar_function=lambda done, total: progress_callback(done, total, sender)
-            )
-            await progress_message.delete()
-
-            attributes = [
-                DocumentAttributeVideo(
-                    duration=duration,
-                    w=width,
-                    h=height,
-                    supports_streaming=True
+            try:
+                await edit.delete()
+                progress_message = await gf.send_message(sender, "**__Uploading...__**")
+                caption = await format_caption_to_html(caption)
+                
+                # Use asyncio.create_task for better performance
+                upload_task = asyncio.create_task(
+                    fast_upload(
+                        gf, file,
+                        reply=progress_message,
+                        name=None,
+                        progress_bar_function=lambda done, total: progress_callback(done, total, sender)
+                    )
                 )
-            ] if file.split('.')[-1].lower() in video_formats else []
+                
+                uploaded = await upload_task
+                await progress_message.delete()
 
-            await gf.send_file(
-                target_chat_id,
-                uploaded,
-                caption=caption,
-                attributes=attributes,
-                reply_to=topic_id,
-                thumb=thumb_path
-            )
-            await gf.send_file(
-                LOG_GROUP,
-                uploaded,
-                caption=caption,
-                attributes=attributes,
-                thumb=thumb_path
-            )
+                attributes = [
+                    DocumentAttributeVideo(
+                        duration=duration,
+                        w=width,
+                        h=height,
+                        supports_streaming=True
+                    )
+                ] if file.split('.')[-1].lower() in video_formats else []
+
+                # Send to target chat
+                await gf.send_file(
+                    target_chat_id,
+                    uploaded,
+                    caption=caption,
+                    attributes=attributes,
+                    reply_to=topic_id,
+                    thumb=thumb_path
+                )
+                
+                # Send to log group
+                await gf.send_file(
+                    LOG_GROUP,
+                    uploaded,
+                    caption=caption,
+                    attributes=attributes,
+                    thumb=thumb_path
+                )
+                
+            except Exception as e:
+                await app.send_message(LOG_GROUP, f"**Telethon Upload Failed:** {str(e)}")
+                print(f"Error during Telethon upload: {e}")
+                raise
 
     except Exception as e:
         await app.send_message(LOG_GROUP, f"**Upload Failed:** {str(e)}")
         print(f"Error during media upload: {e}")
+        raise
 
     finally:
         # Only remove auto-generated thumbnails after successful upload, and not user-set ones
         try:
             if thumb_path and os.path.exists(thumb_path) and thumb_path != f'{sender}.jpg':
-                await asyncio.sleep(2)  # Delay cleanup to ensure thumbnail is used before deletion
+                await asyncio.sleep(1)  # Reduced delay
                 os.remove(thumb_path)
         except Exception as e:
             print(f"Error removing thumbnail: {e}")
+        
+        # Force garbage collection
         gc.collect()
 
 
 async def get_msg(userbot, sender, edit_id, msg_link, i, message):
     try:
-        # Sanitize the message link
-        msg_link = msg_link.split("?single")[0]
-        chat, msg_id = None, None
-        saved_channel_ids = load_saved_channel_ids()
-        size_limit = 2 * 1024 * 1024 * 1024  # 1.99 GB size limit
-        file = ''
-        edit = ''
-        # Extract chat and message ID for valid Telegram links
-        if 't.me/c/' in msg_link or 't.me/b/' in msg_link:
-            parts = msg_link.split("/")
-            if 't.me/b/' in msg_link:
-                chat = parts[-2]
-                msg_id = int(parts[-1]) + i # fixed bot problem 
-            else:
-                chat = int('-100' + parts[parts.index('c') + 1])
-                msg_id = int(parts[-1]) + i
-
-            if chat in saved_channel_ids:
-                await app.edit_message_text(
-                    message.chat.id, edit_id,
-                    "Sorry! This channel is protected by **__Shimperd__**."
-                )
-                return
-            
-        elif '/s/' in msg_link: # fixed story typo
-            edit = await app.edit_message_text(sender, edit_id, "Story Link Dictected...")
-            if userbot is None:
-                await edit.edit("Login in bot save stories...")     
-                return
-            parts = msg_link.split("/")
-            chat = parts[3]
-            
-            if chat.isdigit():   # this is for channel stories
-                chat = f"-100{chat}"
-            
-            msg_id = int(parts[-1])
-            await download_user_stories(userbot, chat, msg_id, edit, sender)
-            await edit.delete(2)
-            return
+        # Add timeout to prevent hanging
+        timeout = 300  # 5 minutes timeout
         
-        else:
-            edit = await app.edit_message_text(sender, edit_id, "Public link detected...")
+        # Parse the message link
+        if "t.me/p/" in msg_link:
+            # Handle private user links
             try:
-                chat = msg_link.split("t.me/")[1].split("/")[0]
-                msg_id = int(msg_link.split("/")[-1])
-                print(f"Processing public link - Chat: {chat}, Message ID: {msg_id}")
-                
-                # Check if userbot is available
-                if not userbot:
-                    await edit.edit("❌ You need to login first. Use /login command to authenticate.")
+                username, msg_id = await extract_private_user_info(msg_link)
+                chat = await resolve_username(userbot, username)
+                if not chat:
+                    await app.edit_message_text(sender, edit_id, "Could not resolve username")
                     return
-                
-                # First get the message using userbot since it's already a participant
-                try:
-                    print("Attempting to get message using userbot...")
-                    msg = await userbot.get_messages(chat, msg_id)
-                    print(f"Message retrieved: {msg}")
-                    
-                    if not msg:
-                        print("Message is None")
-                        await edit.edit("Message not found")
-                        return
-                        
-                    if msg.empty:
-                        print("Message is empty")
-                        await edit.edit("Message is empty")
-                        return
-                        
-                    if msg.service:
-                        print("Message is a service message")
-                        await edit.edit("Cannot process service messages")
-                        return
-                    
-                    print(f"Message media type: {msg.media}")
-                    if msg.media:
-                        # For media messages, try downloading and uploading
-                        try:
-                            print("Attempting to download media...")
-                            file = await userbot.download_media(msg)
-                            if file:
-                                print(f"Media downloaded to: {file}")
-                                try:
-                                    # Apply rename function to the downloaded file
-                                    print("Checking if rename needed...")
-                                    # Only apply rename for PDF files, not for videos or audio
-                                    if file.lower().endswith('.pdf'):
-                                        print("PDF detected - applying rename function")
-                                        file = await rename_file(file, sender)
-                                        print(f"File renamed to: {file}")
-                                    else:
-                                        print(f"Not a PDF - keeping original filename: {file}")
-                                    
-                                    # Upload based on media type
-                                    if file.lower().endswith(('.mp4', '.mkv', '.avi')):
-                                        print("Sending as video")
-                                        # Get video metadata
-                                        metadata = video_metadata(file)
-                                        width, height, duration = metadata['width'], metadata['height'], metadata['duration']
-                                        thumb_path = await screenshot(file, duration, sender)
-                                        
-                                        result = await app.send_video(
-                                            sender, 
-                                            file, 
-                                            thumb=thumb_path,
-                                            width=width,
-                                            height=height,
-                                            duration=duration,
-                                            caption=msg.caption.markdown if msg.caption else None,
-                                            progress=progress_bar,
-                                            progress_args=("╭─────────────────────╮\n│      **__Uploading Video__**\n├─────────────────────", edit, time.time())
-                                        )
-                                        
-                                        # Clean up thumbnail if created
-                                        if thumb_path and os.path.exists(thumb_path) and thumb_path != f'{sender}.jpg':
-                                            os.remove(thumb_path)
-                                    elif file.lower().endswith(('.jpg', '.jpeg', '.png')):
-                                        print("Sending as photo")
-                                        result = await app.send_photo(
-                                            sender, 
-                                            file, 
-                                            caption=msg.caption.markdown if msg.caption else None,
-                                            progress=progress_bar,
-                                            progress_args=("╭─────────────────────╮\n│      **__Uploading Photo__**\n├─────────────────────", edit, time.time())
-                                        )
-                                    else:
-                                        print("Sending as document")
-                                        result = await app.send_document(
-                                            sender, 
-                                            file, 
-                                            caption=msg.caption.markdown if msg.caption else None,
-                                            progress=progress_bar,
-                                            progress_args=("╭─────────────────────╮\n│      **__Uploading Document__**\n├─────────────────────", edit, time.time())
-                                        )
-                                    
-                                    if result:
-                                        print("Media uploaded successfully")
-                                        await result.copy(LOG_GROUP)
-                                        await edit.delete(2)
-                                except Exception as upload_error:
-                                    print(f"Error during upload: {upload_error}")
-                                    await edit.edit(f"Error uploading media: {str(upload_error)}")
-                                finally:
-                                    if os.path.exists(file):
-                                        os.remove(file)
-                                        print(f"Cleaned up temporary file: {file}")
-                                return
-                            else:
-                                print("Download returned no file")
-                                await edit.edit("Failed to download media")
-                        except Exception as download_error:
-                            print(f"Error downloading media: {download_error}")
-                            await edit.edit(f"Error downloading media: {str(download_error)}")
-                    elif msg.text:
-                        print("Processing text message")
-                        result = await app.send_message(sender, msg.text.markdown)
-                        if result:
-                            await result.copy(LOG_GROUP)
-                            await edit.delete(2)
-                            return
-                    else:
-                        print("No media or text found in message")
-                        await edit.edit("No media or text found in the message")
-                except Exception as get_msg_error:
-                    print(f"Error getting message: {get_msg_error}")
-                    await edit.edit(f"Error retrieving message: {str(get_msg_error)}")
+            except Exception as e:
+                print(f"Error processing private user link: {e}")
+                await app.edit_message_text(sender, edit_id, f"Error processing private link: {str(e)}")
+                return
+        else:
+            # Handle normal Telegram links
+            try:
+                chat, msg_id = await parse_telegram_link(msg_link, i)
+                if not chat:
+                    await app.edit_message_text(sender, edit_id, "Could not parse link")
+                    return
             except Exception as e:
                 print(f"Error processing public link: {e}")
-                await edit.edit(f"Error processing link: {str(e)}")
+                await app.edit_message_text(sender, edit_id, f"Error processing link: {str(e)}")
+                return
+            
+        # Fetch the target message with timeout
+        try:
+            msg = await asyncio.wait_for(
+                userbot.get_messages(chat, msg_id),
+                timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            await app.edit_message_text(sender, edit_id, "Timeout: Message fetch took too long")
+            return
+        except Exception as e:
+            await app.edit_message_text(sender, edit_id, f"Error fetching message: {str(e)}")
             return
             
-        # Fetch the target message
-        msg = await userbot.get_messages(chat, msg_id)
         if not msg or msg.service or msg.empty:
+            await app.edit_message_text(sender, edit_id, "Message not found or is a service message")
             return
 
         target_chat_id = user_chat_ids.get(message.chat.id, message.chat.id)
@@ -378,7 +272,7 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         if '/' in str(target_chat_id):
             target_chat_id, topic_id = map(int, target_chat_id.split('/', 1))
 
-        # Handle different message types
+        # Handle different message types efficiently
         if msg.media == MessageMediaType.WEB_PAGE_PREVIEW:
             await clone_message(app, msg, target_chat_id, topic_id, edit_id, LOG_GROUP)
             return
@@ -391,51 +285,65 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             await handle_sticker(app, msg, target_chat_id, topic_id, edit_id, LOG_GROUP)
             return
 
-        
         # Handle file media (photo, document, video)
         file_size = get_message_file_size(msg)
-        # Get the user status (free or premium)
         free_check = await chk_user(message.chat.id, sender)
-
-        # if file_size and file_size > size_limit and pro is None:
-        #     await app.edit_message_text(sender, edit_id, "**❌ 4GB Uploader not found**")
-        #     return
+        size_limit = 2 * 1024 * 1024 * 1024  # 2GB size limit
 
         file_name = await get_media_filename(msg)
         edit = await app.edit_message_text(sender, edit_id, "**Downloading...**")
 
-        # Download media
-        file = await userbot.download_media(
-            msg,
-            file_name=file_name,
-            progress=progress_bar,
-            progress_args=("╭─────────────────────╮\n│      **__Downloading__...**\n├─────────────────────", edit, time.time())
-        )
+        # Download media with timeout and better error handling
+        try:
+            file = await asyncio.wait_for(
+                userbot.download_media(
+                    msg,
+                    file_name=file_name,
+                    progress=progress_bar,
+                    progress_args=("╭─────────────────────╮\n│      **__Downloading__...**\n├─────────────────────", edit, time.time())
+                ),
+                timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            await edit.edit_text("Download timeout: File is too large or connection is slow")
+            return
+        except Exception as e:
+            await edit.edit_text(f"Download failed: {str(e)}")
+            return
         
+        if not file:
+            await edit.edit_text("Failed to download media")
+            return
+            
         caption = await get_final_caption(msg, sender)
 
         # Rename file
-        file = await rename_file(file, sender)
+        try:
+            file = await rename_file(file, sender)
+        except Exception as e:
+            print(f"Error renaming file: {e}")
+            # Continue with original filename
+
+        # Handle specific media types
         if msg.audio:
             result = await app.send_audio(target_chat_id, file, caption=caption, reply_to_message_id=topic_id)
             await result.copy(LOG_GROUP)
-            await edit.delete(2)
+            await edit.delete()
             return
         
         if msg.voice:
             result = await app.send_voice(target_chat_id, file, reply_to_message_id=topic_id)
             await result.copy(LOG_GROUP)
-            await edit.delete(2)
+            await edit.delete()
             return
 
         if msg.photo:
             result = await app.send_photo(target_chat_id, file, caption=caption, reply_to_message_id=topic_id)
             await result.copy(LOG_GROUP)
-            await edit.delete(2)
+            await edit.delete()
             return
 
-        # Upload media
-        # await edit.edit("**Checking file...**")
+        # Upload media with size checking
         if file_size > size_limit and (free_check == 1 or pro is None):
             await edit.delete()
             await split_and_upload_file(app, sender, target_chat_id, file, caption, topic_id)
@@ -448,15 +356,25 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
     except (ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid):
         await app.edit_message_text(sender, edit_id, "Have you joined the channel?")
     except Exception as e:
-        # await app.edit_message_text(sender, edit_id, f"Failed to save: `{msg_link}`\n\nError: {str(e)}")
-        print(f"Error: {e}")
+        print(f"Error in get_msg: {e}")
+        await app.edit_message_text(sender, edit_id, f"An error occurred: {str(e)}")
     finally:
-        # Clean up
-        if file and os.path.exists(file):
-            os.remove(file)
-        if edit:
-            await edit.delete(2)
+        # Clean up resources
+        try:
+            if 'file' in locals() and file and os.path.exists(file):
+                os.remove(file)
+        except Exception as e:
+            print(f"Error cleaning up file: {e}")
         
+        try:
+            if 'edit' in locals() and edit:
+                await edit.delete()
+        except Exception as e:
+            print(f"Error deleting edit message: {e}")
+        
+        # Force garbage collection
+        gc.collect()
+
 async def clone_message(app, msg, target_chat_id, topic_id, edit_id, log_group):
     edit = await app.edit_message_text(target_chat_id, edit_id, "Cloning...")
     devgaganin = await app.send_message(target_chat_id, msg.text.markdown, reply_to_message_id=topic_id)
@@ -1521,3 +1439,38 @@ async def process_and_upload_link(userbot, user_id, edit_id, link, i, message):
             message.chat.id, edit_id,
             f"Error processing link: {str(e)}"
         )
+
+async def parse_telegram_link(msg_link, i=0):
+    """Parse Telegram link and return chat and message ID."""
+    try:
+        # Sanitize the message link
+        msg_link = msg_link.split("?single")[0]
+        
+        # Extract chat and message ID for valid Telegram links
+        if 't.me/c/' in msg_link or 't.me/b/' in msg_link:
+            parts = msg_link.split("/")
+            if 't.me/b/' in msg_link:
+                chat = parts[-2]
+                msg_id = int(parts[-1]) + i
+            else:
+                chat = int('-100' + parts[parts.index('c') + 1])
+                msg_id = int(parts[-1]) + i
+            return chat, msg_id
+        elif '/s/' in msg_link:
+            # Handle story links
+            parts = msg_link.split("/")
+            chat = parts[3]
+            
+            if chat.isdigit():   # this is for channel stories
+                chat = f"-100{chat}"
+            
+            msg_id = int(parts[-1])
+            return chat, msg_id
+        else:
+            # Handle public links
+            chat = msg_link.split("t.me/")[1].split("/")[0]
+            msg_id = int(msg_link.split("/")[-1])
+            return chat, msg_id
+    except Exception as e:
+        print(f"Error parsing Telegram link: {e}")
+        return None, None
