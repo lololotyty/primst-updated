@@ -37,6 +37,15 @@ from telethon import TelegramClient, events, Button
 from devgagantools import fast_upload
 import math
 
+# Try to import devgagantools, fallback if not available
+try:
+    from devgagantools import fast_upload
+    FAST_UPLOAD_AVAILABLE = True
+except ImportError:
+    logger.warning("devgagantools not available, Telethon uploads will be limited")
+    FAST_UPLOAD_AVAILABLE = False
+    fast_upload = None
+
 def thumbnail(sender):
     return f'{sender}.jpg' if os.path.exists(f'{sender}.jpg') else None
 
@@ -152,6 +161,10 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
         # Telethon upload with optimized performance
         elif upload_method == "Telethon":
             try:
+                if not FAST_UPLOAD_AVAILABLE:
+                    await edit.edit_text("Telethon upload not available (devgagantools missing)")
+                    return
+                    
                 await edit.delete()
                 progress_message = await gf.send_message(sender, "**__Uploading...__**")
                 caption = await format_caption_to_html(caption)
