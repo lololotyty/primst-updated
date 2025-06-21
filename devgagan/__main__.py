@@ -23,6 +23,7 @@ import sys
 import os
 import logging
 import time
+from utils import performance_optimizer, monitor_performance
 
 # Set up logging
 logging.basicConfig(
@@ -40,21 +41,9 @@ loop = asyncio.get_event_loop()
 async def monitor_memory_usage():
     while True:
         try:
-            # Force full garbage collection
-            gc.collect(generation=2)
+            # Use the performance optimizer for better memory management
+            await performance_optimizer.optimize_memory()
             
-            # Get memory usage
-            import psutil
-            process = psutil.Process(os.getpid())
-            memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
-            
-            # Log memory usage periodically
-            logger.info(f"Current memory usage: {memory_usage:.2f} MB")
-            
-            # If memory usage is high, log a warning
-            if memory_usage > 800:  # 800MB threshold (Heroku dyno has ~1GB)
-                logger.warning(f"High memory usage detected: {memory_usage:.2f} MB")
-                
             # Sleep for a period
             await asyncio.sleep(300)  # Check every 5 minutes
         except Exception as e:
@@ -95,8 +84,10 @@ async def load_modules():
 
 async def devggn_boot():
     try:
-        # Start memory monitoring
+        # Start performance monitoring tasks
         asyncio.create_task(monitor_memory_usage())
+        asyncio.create_task(performance_optimizer.periodic_cleanup())
+        asyncio.create_task(monitor_performance())
         
         # Load the modules with error handling
         await load_modules()
@@ -115,6 +106,7 @@ async def devggn_boot():
 🔄 Last Modified: 2025-01-11
 🛠️ Version: 2.0.5
 📜 License: MIT License
+⚡ Performance Optimized
 ---------------------------------------------------
 """)
 
