@@ -38,8 +38,11 @@ app = Client(
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
-    workers=50,
-    parse_mode=ParseMode.MARKDOWN
+    workers=100,
+    parse_mode=ParseMode.MARKDOWN,
+    max_concurrent_transmissions=10,
+    request_retries=3,
+    retry_delay=1
 )
 
 # Initialize Telethon client with FloodWait error handling
