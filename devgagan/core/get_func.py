@@ -236,7 +236,7 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
 async def get_msg(userbot, sender, edit_id, msg_link, i, message):
     try:
         # Add timeout to prevent hanging
-        timeout = 300  # 5 minutes timeout
+        timeout = 3000  # 50 minutes timeout
         
         # Parse the message link
         if "t.me/p/" in msg_link:
